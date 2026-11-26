@@ -8,6 +8,7 @@ import * as settings from '../settings.js';
 const FOLLOW_SPEED = 0.25;   // 0..1, how quickly the ship catches up to the finger
 const FINGER_OFFSET = 70;    // ship sits this far ahead of the finger so it stays visible
 const FIRE_EVERY_MS = 180;   // time between shots while the finger is down
+export const MAX_LIVES = 10; // hits a ship can take before it's destroyed
 // Bullet speed and size come from the Settings screen (see settings.js).
 
 const DIRECTIONS = {
@@ -48,6 +49,67 @@ export default class Ship extends Phaser.Physics.Arcade.Image {
       defaultKey: texture.replace('ship', 'bullet'),
       maxSize: 40,
     });
+
+    this.lives = MAX_LIVES;
+    this.lifeBar = scene.add.graphics();
+  }
+
+  // Where to draw this ship's life bar. dir = 1 grows rightward, -1 leftward.
+  placeLifeBar(x, y, dir) {
+    this.lifeBarSpot = { x, y, dir };
+    this.drawLifeBar();
+  }
+
+  // 10 little blocks: full ones are coloured (green, then yellow, then red), lost ones are dark.
+  drawLifeBar() {
+    const { x, y, dir } = this.lifeBarSpot;
+    const g = this.lifeBar;
+    const color = this.lives > 6 ? 0x2ecc71 : this.lives > 3 ? 0xffd84d : 0xff4d4d;
+    g.clear();
+    for (let i = 0; i < MAX_LIVES; i++) {
+      const left = dir > 0 ? x + i * 18 : x - i * 18 - 14;
+      if (i < this.lives) {
+        g.fillStyle(color, 1);
+        g.fillRoundedRect(left, y - 11, 14, 22, 4);
+      } else {
+        g.lineStyle(2, 0x5a5f7a, 1);
+        g.strokeRoundedRect(left, y - 11, 14, 22, 4);
+      }
+    }
+  }
+
+  // Lose one life. Returns true if that was the last one.
+  takeHit() {
+    this.lives = Math.max(0, this.lives - 1);
+    this.drawLifeBar();
+    if (this.lives > 0) {
+      // Quick blink so you can see you got hit.
+      this.scene.tweens.add({ targets: this, alpha: 0.3, duration: 70, yoyo: true, repeat: 1 });
+    }
+    return this.lives === 0;
+  }
+
+  // Blow up: ship pieces fly out in its colour and the ship disappears.
+  explode() {
+    const scene = this.scene;
+    for (let i = 0; i < 14; i++) {
+      const piece = scene.add.circle(this.x, this.y, Phaser.Math.Between(5, 12),
+        i % 3 === 0 ? 0xffd84d : this.color);
+      const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+      const dist = Phaser.Math.Between(60, 160);
+      scene.tweens.add({
+        targets: piece,
+        x: this.x + Math.cos(angle) * dist,
+        y: this.y + Math.sin(angle) * dist,
+        alpha: 0,
+        scale: 0.3,
+        duration: 700,
+        ease: 'Cubic.easeOut',
+        onComplete: () => piece.destroy(),
+      });
+    }
+    scene.cameras.main.shake(250, 0.01);
+    this.setVisible(false);
   }
 
   // Called by the scene when this ship's finger moves.

@@ -11,7 +11,7 @@
 //
 // Shoot an asteroid past the OTHER player's line = 1 point.
 // When all 5 are gone, the higher score wins.
-// Hitting the other ship directly is an instant win.
+// Each hit on the other ship takes 1 of its 10 lives; 0 lives = destroyed, you win.
 import { makeButton } from '../ui/button.js';
 import { makeTextures } from '../art/textures.js';
 import Ship from '../objects/Ship.js';
@@ -64,6 +64,10 @@ export default class GameScene extends Phaser.Scene {
     blue.scoreText = this.makeScoreText(width - 60, height - STRIP_DEPTH / 2, blue, 0);
     orange.scoreText = this.makeScoreText(60, STRIP_DEPTH / 2, orange, 180);
 
+    // --- Life bars: opposite corner from the score ---
+    blue.placeLifeBar(24, height - STRIP_DEPTH / 2, 1);
+    orange.placeLifeBar(width - 24, STRIP_DEPTH / 2, -1);
+
     // --- Asteroids in a row across the middle ---
     // They bounce off the left/right edges only (top/bottom are the goals).
     this.physics.world.setBoundsCollision(true, true, false, false);
@@ -83,7 +87,7 @@ export default class GameScene extends Phaser.Scene {
       });
     }
 
-    // --- Hitting the OTHER ship directly is an instant win ---
+    // --- Hitting the OTHER ship takes a life; 10 hits destroys it ---
     this.gameOver = false;
     this.physics.add.overlap(orange, blue.bullets, (ship, bullet) => this.hit(blue, orange, bullet));
     this.physics.add.overlap(blue, orange.bullets, (ship, bullet) => this.hit(orange, blue, bullet));
@@ -177,21 +181,19 @@ export default class GameScene extends Phaser.Scene {
     this.showWinner(winner, `${blue.score} – ${orange.score}`);
   }
 
-  // shooter's bullet hit the loser: shooter wins.
-  hit(shooter, loser, bullet) {
+  // shooter's bullet hit the target ship: it loses a life.
+  // Out of lives = ship destroyed and the shooter wins.
+  hit(shooter, target, bullet) {
     if (this.gameOver) return;
-    this.gameOver = true;
     shooter.removeBullet(bullet);
+    if (!target.takeHit()) return; // still has lives left
 
-    // Freeze everything.
+    this.gameOver = true;
     this.physics.pause();
     for (const s of this.ships) s.firing = false;
 
-    // Loser flashes and fades.
-    this.tweens.add({ targets: loser, alpha: 0.15, duration: 120, yoyo: true, repeat: 3,
-      onComplete: () => loser.setAlpha(0.25) });
-
-    this.showWinner(shooter, 'Direct hit!');
+    target.explode();
+    this.time.delayedCall(600, () => this.showWinner(shooter, `${target.name}'s ship destroyed!`));
   }
 
   showWinner(winner, subtitle) {
