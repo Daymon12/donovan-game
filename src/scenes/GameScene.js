@@ -1,16 +1,21 @@
 // The game screen: two players face each other across an open middle.
 //
-//   | P1 |                              | P2 |
-//   | ▶  |        open middle           |  ◀ |
-//   |    |                              |    |
-//   left line                      right line
+//   ─────────────────────────────  ← top edge
+//              ▼  orange player (P2)
+//   - - - - - - - - - - - - - - -  ← top line
+//
+//               open middle
+//
+//   - - - - - - - - - - - - - - -  ← bottom line
+//              ▲  blue player (P1)
+//   ─────────────────────────────  ← bottom edge
 //
 // Each ship stays in its own strip behind its line.
 import { makeButton } from '../ui/button.js';
 import { makeTextures } from '../art/textures.js';
 import Ship from '../objects/Ship.js';
 
-const STRIP_WIDTH = 200; // how deep each player's strip is, from the screen edge
+const STRIP_DEPTH = 180; // how deep each player's strip is, from the screen edge
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
@@ -22,37 +27,37 @@ export default class GameScene extends Phaser.Scene {
     makeTextures(this);
 
     // --- The two lines ---
-    const leftLineX = STRIP_WIDTH;
-    const rightLineX = width - STRIP_WIDTH;
-    this.drawDashedLine(leftLineX, height, 0x2ec4ff);
-    this.drawDashedLine(rightLineX, height, 0xff7a45);
+    const topLineY = STRIP_DEPTH;
+    const bottomLineY = height - STRIP_DEPTH;
+    this.drawDashedLine(topLineY, width, 0xff7a45);
+    this.drawDashedLine(bottomLineY, width, 0x2ec4ff);
 
     // --- Ships: each lives in its own strip and points at the other ---
     this.ships = [
-      new Ship(this, leftLineX / 2, height / 2, {
-        zone: new Phaser.Geom.Rectangle(0, 0, leftLineX - 4, height),
-        facing: 'right',
+      new Ship(this, width / 2, height - STRIP_DEPTH / 2, {
+        zone: new Phaser.Geom.Rectangle(0, bottomLineY + 4, width, STRIP_DEPTH - 4),
+        facing: 'up',
         texture: 'ship-blue',
       }),
-      new Ship(this, width - STRIP_WIDTH / 2, height / 2, {
-        zone: new Phaser.Geom.Rectangle(rightLineX + 4, 0, STRIP_WIDTH - 4, height),
-        facing: 'left',
+      new Ship(this, width / 2, STRIP_DEPTH / 2, {
+        zone: new Phaser.Geom.Rectangle(0, 0, width, topLineY - 4),
+        facing: 'down',
         texture: 'ship-orange',
       }),
     ];
 
-    this.setUpTouch(width);
+    this.setUpTouch(height);
 
-    // Small "back" button at the top middle (away from both players).
-    makeButton(this, width / 2, 50, '◀ Back', () => {
+    // Small "back" button on the left edge of the middle (away from both players).
+    makeButton(this, 100, height / 2, '◀ Back', () => {
       this.scene.start('TitleScene');
-    }, { width: 180, height: 70, fontSize: 30, color: 0x5b6ee1 });
+    }, { width: 160, height: 64, fontSize: 28, color: 0x5b6ee1 });
   }
 
-  // Touch the left half to drive the left ship, the right half for the right ship.
+  // Touch the bottom half to drive the bottom ship, the top half for the top ship.
   // Two fingers at once work, so both players can play together.
-  setUpTouch(width) {
-    const shipFor = (p) => (p.x < width / 2 ? this.ships[0] : this.ships[1]);
+  setUpTouch(height) {
+    const shipFor = (p) => (p.y > height / 2 ? this.ships[0] : this.ships[1]);
 
     this.input.on('pointerdown', (p, over) => {
       if (over.length > 0) return; // tapped a button, not the field
@@ -79,11 +84,11 @@ export default class GameScene extends Phaser.Scene {
     this.input.on('pointerupoutside', release);
   }
 
-  drawDashedLine(x, height, color) {
+  drawDashedLine(y, width, color) {
     const g = this.add.graphics();
     g.lineStyle(6, color, 0.9);
-    for (let y = 0; y < height; y += 40) {
-      g.lineBetween(x, y, x, y + 24);
+    for (let x = 0; x < width; x += 40) {
+      g.lineBetween(x, y, x + 24, y);
     }
   }
 
