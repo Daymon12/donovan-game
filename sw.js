@@ -2,7 +2,7 @@
 // Strategy: try the internet first (so updates show up right away),
 // and fall back to the saved copy when offline.
 // Bump CACHE when you want to force-refresh everything.
-const CACHE = 'donovan-v1';
+const CACHE = 'donovan-v2';
 
 const FILES = [
   './',
@@ -10,6 +10,8 @@ const FILES = [
   'manifest.webmanifest',
   'lib/phaser.min.js',
   'src/main.js',
+  'src/version.js',
+  'src/update.js',
   'src/ui/button.js',
   'src/scenes/TitleScene.js',
   'src/scenes/GameScene.js',
@@ -36,8 +38,10 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
 
+  // 'no-cache' = always ask GitHub if the file changed (skips the browser's
+  // 10-minute reuse window), so new versions show up on the next launch.
   event.respondWith(
-    fetch(req)
+    fetch(new Request(req.url, { cache: 'no-cache', credentials: 'same-origin' }))
       .then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(req, copy));
