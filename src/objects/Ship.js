@@ -3,11 +3,12 @@
 // zone   = the rectangle the ship may move in (its strip behind its line).
 //          The ship can never leave its zone, so it can't cross its line.
 // facing = which way the ship points and shoots: 'up', 'down', 'left' or 'right'.
+import * as settings from '../settings.js';
 
 const FOLLOW_SPEED = 0.25;   // 0..1, how quickly the ship catches up to the finger
 const FINGER_OFFSET = 70;    // ship sits this far ahead of the finger so it stays visible
 const FIRE_EVERY_MS = 180;   // time between shots while the finger is down
-const BULLET_SPEED = 400;    // pixels per second
+// Bullet speed and size come from the Settings screen (see settings.js).
 
 const DIRECTIONS = {
   up:    { angle: 0,   dx: 0,  dy: -1 },
@@ -83,8 +84,10 @@ export default class Ship extends Phaser.Physics.Arcade.Image {
     const noseY = this.y + this.dir.dy * this.halfH;
     const b = this.bullets.get(noseX, noseY);
     if (!b) return; // all 40 bullets are already flying
+    const speed = settings.get('bulletSpeed').value;
     b.enableBody(true, noseX, noseY, true, true);
     b.setAngle(this.dir.angle);
-    b.setVelocity(this.dir.dx * BULLET_SPEED, this.dir.dy * BULLET_SPEED);
+    b.setScale(settings.get('bulletSize').value);
+    b.setVelocity(this.dir.dx * speed, this.dir.dy * speed);
   }
 }

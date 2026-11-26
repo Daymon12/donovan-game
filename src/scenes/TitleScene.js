@@ -39,7 +39,11 @@ export default class TitleScene extends Phaser.Scene {
   addUpdateCorner(width, height) {
     const small = { fontFamily: 'Arial, sans-serif', fontSize: '22px', color: '#8a90b8' };
 
-    this.add.text(24, height - 24, `v${VERSION}`, small).setOrigin(0, 1);
+    this.add.text(width / 2, height - 24, `v${VERSION}`, small).setOrigin(0.5, 1);
+
+    makeButton(this, 104, height - 52, 'Settings', () => {
+      this.scene.start('SettingsScene');
+    }, { width: 160, height: 56, fontSize: 24, color: 0x3a4070 });
 
     const status = this.add.text(width - 24, height - 110, '', small).setOrigin(1, 1);
 

@@ -1,6 +1,7 @@
 // Entry point: sets up the Phaser game and lists every scene (screen).
 import TitleScene from './scenes/TitleScene.js';
 import GameScene from './scenes/GameScene.js';
+import SettingsScene from './scenes/SettingsScene.js';
 
 // The game's size matches the shape of the screen it starts on, so it fills
 // the whole iPad with no empty bands. The short side is always 834
@@ -33,7 +34,7 @@ new Phaser.Game({
     arcade: { debug: false },
   },
   // The first scene in this list is the one shown at launch.
-  scene: [TitleScene, GameScene],
+  scene: [TitleScene, GameScene, SettingsScene],
 });
 
 // Turning the iPad between upright and sideways restarts the game in the new shape.
