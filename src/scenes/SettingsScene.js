@@ -27,7 +27,7 @@ export default class SettingsScene extends Phaser.Scene {
     this.add.text(width / 2, this.previewTop - 10, 'Preview', {
       fontFamily: FONT, fontSize: '24px', color: '#8a90b8',
     }).setOrigin(0.5, 1);
-    this.preview = this.add.image(width / 2, this.previewBottom, 'bullet-blue');
+    this.preview = this.add.image(width / 2, this.previewBottom, 'bullet-electric-blue');
 
     makeButton(this, width / 2, height * 0.93, '◀ Back', () => {
       this.scene.start('TitleScene');

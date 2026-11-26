@@ -2,7 +2,7 @@
 // Strategy: try the internet first (so updates show up right away),
 // and fall back to the saved copy when offline.
 // Bump CACHE when you want to force-refresh everything.
-const CACHE = 'donovan-v11';
+const CACHE = 'donovan-v12';
 
 const FILES = [
   './',
@@ -13,6 +13,7 @@ const FILES = [
   'src/version.js',
   'src/update.js',
   'src/ui/button.js',
+  'src/ui/powers.js',
   'src/scenes/TitleScene.js',
   'src/scenes/GameScene.js',
   'src/scenes/SettingsScene.js',
