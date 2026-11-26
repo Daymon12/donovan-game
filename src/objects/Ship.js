@@ -7,7 +7,7 @@
 const FOLLOW_SPEED = 0.25;   // 0..1, how quickly the ship catches up to the finger
 const FINGER_OFFSET = 70;    // ship sits this far ahead of the finger so it stays visible
 const FIRE_EVERY_MS = 180;   // time between shots while the finger is down
-const BULLET_SPEED = 750;    // pixels per second
+const BULLET_SPEED = 400;    // pixels per second
 
 const DIRECTIONS = {
   up:    { angle: 0,   dx: 0,  dy: -1 },
@@ -17,10 +17,15 @@ const DIRECTIONS = {
 };
 
 export default class Ship extends Phaser.Physics.Arcade.Image {
-  constructor(scene, x, y, { zone, facing = 'up', texture = 'ship-blue' }) {
+  constructor(scene, x, y, { zone, facing = 'up', texture = 'ship-blue', name = 'Player', color = 0xffffff }) {
     super(scene, x, y, texture);
     scene.add.existing(this);
     scene.physics.add.existing(this);
+
+    this.name = name;
+    this.color = color;
+    // Hit box a bit smaller than the picture, so near-misses don't count.
+    this.body.setSize(52, 60, true);
 
     this.dir = DIRECTIONS[facing];
     this.setAngle(this.dir.angle);
@@ -63,10 +68,14 @@ export default class Ship extends Phaser.Physics.Arcade.Image {
     const { width, height } = this.scene.scale;
     for (const b of this.bullets.getChildren()) {
       if (b.active && (b.x < -30 || b.x > width + 30 || b.y < -30 || b.y > height + 30)) {
-        this.bullets.killAndHide(b);
-        b.body.stop();
+        this.removeBullet(b);
       }
     }
+  }
+
+  // Put a bullet back in the pool (off screen, or after it hits something).
+  removeBullet(b) {
+    b.disableBody(true, true);
   }
 
   shoot() {
@@ -74,8 +83,8 @@ export default class Ship extends Phaser.Physics.Arcade.Image {
     const noseY = this.y + this.dir.dy * this.halfH;
     const b = this.bullets.get(noseX, noseY);
     if (!b) return; // all 40 bullets are already flying
-    b.setActive(true).setVisible(true).setAngle(this.dir.angle);
-    b.body.reset(noseX, noseY);
+    b.enableBody(true, noseX, noseY, true, true);
+    b.setAngle(this.dir.angle);
     b.setVelocity(this.dir.dx * BULLET_SPEED, this.dir.dy * BULLET_SPEED);
   }
 }

@@ -38,13 +38,23 @@ export default class GameScene extends Phaser.Scene {
         zone: new Phaser.Geom.Rectangle(0, bottomLineY + 4, width, STRIP_DEPTH - 4),
         facing: 'up',
         texture: 'ship-blue',
+        name: 'Blue',
+        color: 0x2ec4ff,
       }),
       new Ship(this, width / 2, STRIP_DEPTH / 2, {
         zone: new Phaser.Geom.Rectangle(0, 0, width, topLineY - 4),
         facing: 'down',
         texture: 'ship-orange',
+        name: 'Orange',
+        color: 0xff7a45,
       }),
     ];
+
+    // --- Hits: a bullet touching the OTHER ship ends the round ---
+    this.gameOver = false;
+    const [blue, orange] = this.ships;
+    this.physics.add.overlap(orange, blue.bullets, (ship, bullet) => this.hit(blue, orange, bullet));
+    this.physics.add.overlap(blue, orange.bullets, (ship, bullet) => this.hit(orange, blue, bullet));
 
     this.setUpTouch(height);
 
@@ -66,6 +76,10 @@ export default class GameScene extends Phaser.Scene {
       ship.pointerId = p.id;
       ship.firing = true;
       ship.aimAt(p.x, p.y);
+      if (!this.gameOver && this.time.now - ship.lastShot > 180) {
+        ship.shoot(); // a quick tap fires right away
+        ship.lastShot = this.time.now;
+      }
     });
 
     this.input.on('pointermove', (p) => {
@@ -84,6 +98,42 @@ export default class GameScene extends Phaser.Scene {
     this.input.on('pointerupoutside', release);
   }
 
+  // shooter's bullet hit the loser: shooter wins.
+  hit(shooter, loser, bullet) {
+    if (this.gameOver) return;
+    this.gameOver = true;
+    shooter.removeBullet(bullet);
+
+    // Freeze everything.
+    this.physics.pause();
+    for (const s of this.ships) s.firing = false;
+
+    // Loser flashes and fades.
+    this.tweens.add({ targets: loser, alpha: 0.15, duration: 120, yoyo: true, repeat: 3,
+      onComplete: () => loser.setAlpha(0.25) });
+
+    this.showWinner(shooter);
+  }
+
+  showWinner(winner) {
+    const { width, height } = this.scale;
+    const hex = '#' + winner.color.toString(16).padStart(6, '0');
+
+    const text = this.add.text(width / 2, height / 2 - 40, `${winner.name} wins!`, {
+      fontFamily: 'Arial Rounded MT Bold, Arial, sans-serif',
+      fontSize: '96px',
+      fontStyle: 'bold',
+      color: hex,
+      stroke: '#ffffff',
+      strokeThickness: 8,
+    }).setOrigin(0.5).setScale(0);
+    this.tweens.add({ targets: text, scale: 1, duration: 400, ease: 'Back.easeOut' });
+
+    makeButton(this, width / 2, height / 2 + 80, 'Play again', () => {
+      this.scene.restart();
+    }, { width: 320, height: 90, fontSize: 44 });
+  }
+
   drawDashedLine(y, width, color) {
     const g = this.add.graphics();
     g.lineStyle(6, color, 0.9);
@@ -94,6 +144,7 @@ export default class GameScene extends Phaser.Scene {
 
   // Runs about 60 times a second.
   update(time) {
+    if (this.gameOver) return;
     for (const ship of this.ships) ship.update(time);
   }
 }

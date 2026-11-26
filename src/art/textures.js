@@ -15,12 +15,12 @@ export function makeTextures(scene) {
   g.generateTexture('ship-orange', 72, 80);
   g.clear();
 
-  // --- Bullet: 12 x 26 glowing capsule (points up, like the ships) ---
+  // --- Bullet: 16 x 34 glowing capsule (points up, like the ships) ---
   g.fillStyle(0xffd84d, 1);
-  g.fillRoundedRect(0, 0, 12, 26, 6);
+  g.fillRoundedRect(0, 0, 16, 34, 8);
   g.fillStyle(0xffffff, 1);
-  g.fillRoundedRect(3, 3, 6, 12, 3);
-  g.generateTexture('bullet', 12, 26);
+  g.fillRoundedRect(4, 4, 8, 15, 4);
+  g.generateTexture('bullet', 16, 34);
 
   g.destroy();
 }
