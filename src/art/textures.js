@@ -3,7 +3,7 @@
 // Later you can swap any of these for a real picture with the same name.
 
 export function makeTextures(scene) {
-  if (scene.textures.exists('bullet')) return; // only draw once
+  if (scene.textures.exists('bullet-blue')) return; // only draw once
 
   const g = scene.add.graphics();
 
@@ -15,14 +15,23 @@ export function makeTextures(scene) {
   g.generateTexture('ship-orange', 72, 80);
   g.clear();
 
-  // --- Bullet: 16 x 34 glowing capsule (points up, like the ships) ---
-  g.fillStyle(0xffd84d, 1);
+  // --- Bullets match their ship: 'ship-blue' fires 'bullet-blue', etc. ---
+  drawBullet(g, 0x2ec4ff);
+  g.generateTexture('bullet-blue', 16, 34);
+  g.clear();
+
+  drawBullet(g, 0xff7a45);
+  g.generateTexture('bullet-orange', 16, 34);
+
+  g.destroy();
+}
+
+// Bullet: 16 x 34 glowing capsule with a white core, pointing up.
+function drawBullet(g, color) {
+  g.fillStyle(color, 1);
   g.fillRoundedRect(0, 0, 16, 34, 8);
   g.fillStyle(0xffffff, 1);
   g.fillRoundedRect(4, 4, 8, 15, 4);
-  g.generateTexture('bullet', 16, 34);
-
-  g.destroy();
 }
 
 // Ship: 72 x 80, drawn pointing UP. Ships are rotated to face other ways.

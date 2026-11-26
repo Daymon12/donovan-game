@@ -43,7 +43,11 @@ export default class Ship extends Phaser.Physics.Arcade.Image {
     this.pointerId = null; // which finger is driving this ship
 
     // A pool of reusable bullets (faster than creating new ones every shot).
-    this.bullets = scene.physics.add.group({ defaultKey: 'bullet', maxSize: 40 });
+    // Bullets match the ship's colour: 'ship-blue' fires 'bullet-blue'.
+    this.bullets = scene.physics.add.group({
+      defaultKey: texture.replace('ship', 'bullet'),
+      maxSize: 40,
+    });
   }
 
   // Called by the scene when this ship's finger moves.
