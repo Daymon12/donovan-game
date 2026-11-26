@@ -19,6 +19,11 @@ new Phaser.Game({
   input: {
     activePointers: 4, // allow several fingers at once (for two players later)
   },
+  // Arcade physics: simple, fast movement and collisions (speed, bumping, hits).
+  physics: {
+    default: 'arcade',
+    arcade: { debug: false },
+  },
   // The first scene in this list is the one shown at launch.
   scene: [TitleScene, GameScene],
 });
