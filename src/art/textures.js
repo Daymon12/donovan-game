@@ -22,8 +22,31 @@ export function makeTextures(scene) {
 
   drawBullet(g, 0xff7a45);
   g.generateTexture('bullet-orange', 16, 34);
+  g.clear();
+
+  drawAsteroid(g);
+  g.generateTexture('asteroid', 96, 96);
 
   g.destroy();
+}
+
+// Asteroid: 96 x 96 lumpy grey rock with craters.
+function drawAsteroid(g) {
+  const c = 48;
+  // Lumpy outline: a circle with a few bumps (fixed, so every rock looks the same).
+  const bumps = [44, 40, 45, 38, 43, 46, 39, 44, 41, 45, 38, 43];
+  const points = bumps.map((r, i) => {
+    const a = (i / bumps.length) * Math.PI * 2;
+    return new Phaser.Math.Vector2(c + Math.cos(a) * r, c + Math.sin(a) * r);
+  });
+  g.fillStyle(0x8a8f9e, 1);
+  g.fillPoints(points, true);
+  g.fillStyle(0x6b7080, 1);              // craters
+  g.fillCircle(34, 36, 9);
+  g.fillCircle(60, 58, 12);
+  g.fillCircle(38, 66, 6);
+  g.fillStyle(0xb4b9c6, 1);              // highlight
+  g.fillCircle(56, 30, 6);
 }
 
 // Bullet: 16 x 34 glowing capsule with a white core, pointing up.

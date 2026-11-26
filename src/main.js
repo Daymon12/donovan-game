@@ -15,7 +15,8 @@ const aspect = Phaser.Math.Clamp(Math.max(w, h) / Math.min(w, h), 1.3, 2.2);
 const LONG_SIDE = Math.round(SHORT_SIDE * aspect);
 const startedPortrait = isPortrait();
 
-new Phaser.Game({
+// window.game lets us peek at the game from the browser console while testing.
+window.game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game',
   backgroundColor: '#1b1f3b',
