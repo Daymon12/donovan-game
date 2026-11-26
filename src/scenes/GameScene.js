@@ -15,7 +15,9 @@ import { makeButton } from '../ui/button.js';
 import { makeTextures } from '../art/textures.js';
 import Ship from '../objects/Ship.js';
 
-const STRIP_DEPTH = 180; // how deep each player's strip is, from the screen edge
+// How deep each player's strip is, as a share of the screen height
+// (0.25 = each player gets a quarter, the middle gets half).
+const STRIP_SHARE = 0.25;
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
@@ -25,6 +27,7 @@ export default class GameScene extends Phaser.Scene {
   create() {
     const { width, height } = this.scale;
     makeTextures(this);
+    const STRIP_DEPTH = Math.round(height * STRIP_SHARE);
 
     // --- The two lines ---
     const topLineY = STRIP_DEPTH;
