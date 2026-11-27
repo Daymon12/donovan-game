@@ -10,7 +10,9 @@
 //   - At the end of each wave a big boss zombie digs out. The next wave
 //     only starts once it's knocked out (it takes lots of hits).
 //   - Potion bottles pop up now and then. Drive over one for a power-up:
-//     blue = speed, yellow = rapid fire, purple = shield, orange = bulldozer
+//     blue = speed, yellow = rapid fire, purple = shield, olive = land mines
+//     (the jeep drops one behind it every 3 seconds; they only blow up zombies),
+//     orange = bulldozer
 //     (a blade on the front: drive into zombies to flatten them - not the boss!).
 //   - A gun turret on top of each jeep swings round by itself and shoots
 //     the closest zombie (if it's near enough).
@@ -65,6 +67,18 @@ const FAST_CHANCE = 0.15;      // share of fast zombies in wave 1...
 const FAST_CHANCE_PER_WAVE = 0.1; // ...plus this each wave...
 const FAST_CHANCE_MAX = 0.6;   // ...up to this
 
+// Jumpers (from wave 3): purple. One stands still for a moment, turning to
+// face the jeep, then leaps at it in a big hop - and does it again.
+// Can't catch you in mid-air, only when it lands.
+const JUMPER_FROM_WAVE = 3;
+const JUMPER_CHANCE = 0.22;    // share of zombies that are jumpers
+const JUMPER_HITS = 2;         // hits to knock one out (one more every 3 waves)
+const JUMP_WAIT_MS = 1100;     // crouches this long between hops...
+const JUMP_MS = 650;           // ...a hop takes this long...
+const JUMP_DIST = 280;         // ...and covers up to this far...
+const JUMP_HEIGHT = 70;        // ...this high
+const JUMPER_TURN = 4;
+
 // The boss: when a wave's 30 seconds are up, a big zombie (about as big as
 // the jeep) digs out. Other zombies keep coming, and the next wave only
 // starts once the boss is knocked out.
@@ -77,17 +91,23 @@ const BOSS_HITS_PER_WAVE = 8;  // ...plus this many more each wave
 // Potion bottles pop up now and then; drive over one for a power-up.
 const POTION_EVERY_MS = [7000, 11000]; // a new bottle every 7 to 11 seconds
 const POTION_LASTS_MS = 10000;  // a bottle disappears if nobody grabs it
-const BOOST_MS = 7000;          // how long a power-up lasts
+const BOOST_MS = 18000;         // how long a power-up lasts
 const POTIONS = {
   speed:  { color: '#3aa0ff', label: 'Speed!' },     // jeep drives much faster
   rapid:  { color: '#ffd84d', label: 'Rapid fire!' }, // gun shoots much faster
   shield: { color: '#b46bff', label: 'Shield!' },    // zombies can't get you
   dozer:  { color: '#ff8c1a', label: 'Bulldozer!' }, // blade on the front flattens zombies (not the boss)
+  mines:  { color: '#8fa63a', label: 'Land mines!' }, // drops a mine behind the jeep every few seconds
 };
 // Rescue potion: only shows up while a jeep is caught. Grab it and that jeep comes back.
 const RESCUE = { color: '#ff4d6d', label: 'Rescue!' };
 const RESCUE_AFTER_MS = 4000;   // pops up this long after a jeep is caught (or after the last one vanished)
 const RESCUE_LASTS_MS = 15000;
+// Land mines (from the mines potion): one drops behind the jeep every
+// MINE_EVERY_MS. A zombie that steps on one sets it off; jeeps can't.
+const MINE_EVERY_MS = 3000;
+const MINE_BLAST = { blast: 115, damage: 5 }; // hurts every zombie this close
+const MINE_LASTS_MS = 45000;   // an unused mine fades away after this long
 const SPEED_BOOST = 1.6;        // top speed x1.6 with the speed potion
 const RAPID_FACTOR = 0.35;      // rapid-fire potion: time between shots x0.35
 const HOLE_MS = 900;           // a hole takes this long to open...
@@ -112,7 +132,7 @@ const WEAPONS = {
 };
 
 // Points for knocking zombies out, and the weapon box.
-const POINTS = { slow: 10, fast: 15, boss: 100 };
+const POINTS = { slow: 10, fast: 15, jumper: 20, boss: 100 };
 const BOX_WAVE = 5;            // the box first shows up at this wave
 const BOX_PRICE = 300;         // points for one go
 const BOX_MOVE_MS = 1500;      // after a buy it vanishes, then pops up somewhere else
@@ -171,6 +191,7 @@ export default class ZombieGame {
     this.diggers = [];   // zombies still climbing out of their holes
     this.holes = [];     // empty holes waiting to fill in
     this.potions = [];   // bottles waiting to be picked up
+    this.mines = [];     // land mines on the ground
     this.started = performance.now();
     this.wave = 1;
     this.waveStarted = this.started;
@@ -253,7 +274,7 @@ export default class ZombieGame {
       weapon: 'gun',       // see WEAPONS
       out: false,          // caught by a zombie
       safeUntil: 0,
-      boost: { speed: 0, rapid: 0, shield: 0, dozer: 0 }, // when each power-up runs out
+      boost: { speed: 0, rapid: 0, shield: 0, dozer: 0, mines: 0 }, // when each power-up runs out
       model: makeJeep(this, paint),
     };
   }
@@ -401,6 +422,7 @@ export default class ZombieGame {
     this.moveShots(s, now);
     this.updatePotions(now);
     this.updateBox(now);
+    this.updateMines(now);
 
     // New zombies (quicker each wave), but none while the wave track plays.
     if (now >= this.nextZombieAt && now >= this.quietUntil) {
@@ -426,6 +448,10 @@ export default class ZombieGame {
         z.flashUntil = 0;
         setVisibility(z.model, 1);
       }
+      if (z.kind === 'jumper') {
+        this.hop(z, now, s);
+        continue;
+      }
       // (Zombies come through the paths too, not through the trees.)
       this.moveBy(z, z.r, Math.sin(z.heading) * z.speed * s, -Math.cos(z.heading) * z.speed * s);
     }
@@ -443,6 +469,7 @@ export default class ZombieGame {
         this.hurtZombie(z, z.hits, 0, 0, now);
         continue;
       }
+      if ((z.lift || 0) > 30) continue; // a jumper in mid-air can't catch you
       for (const j of this.liveJeeps()) {
         if (now < j.safeUntil || this.hasBoost(j, 'shield', now)) continue;
         if (Math.hypot(z.x - j.x, z.y - j.y) < (JEEP_RADIUS + z.r) * 0.85) {
@@ -490,7 +517,7 @@ export default class ZombieGame {
       this.stopSteering(j);
       Object.assign(j, {
         x: spot.x, y: spot.y, out: false, speed: 0,
-        lastWheels: null, safeUntil: now + JOIN_SAFE_MS, boost: { speed: 0, rapid: 0, shield: 0, dozer: 0 },
+        lastWheels: null, safeUntil: now + JOIN_SAFE_MS, boost: { speed: 0, rapid: 0, shield: 0, dozer: 0, mines: 0 },
       });
       j.model.setEnabled(true);
       j.model.position.copyFrom(this.world.at(j.x, j.y, 0));
@@ -752,6 +779,38 @@ export default class ZombieGame {
     }
   }
 
+  // ---------- Land mines ----------
+
+  // Drop mines behind jeeps that have the potion; blow up any a zombie steps on.
+  updateMines(now) {
+    for (const j of this.liveJeeps()) {
+      if (!this.hasBoost(j, 'mines', now) || now < (j.nextMineAt || 0)) continue;
+      j.nextMineAt = now + MINE_EVERY_MS;
+      const x = j.x - Math.sin(j.heading) * 50; // out the back
+      const y = j.y + Math.cos(j.heading) * 50;
+      const model = makeMine(this);
+      model.position.copyFrom(this.world.at(x, y, -8));
+      this.mines.push({ x, y, model, born: now });
+      this.world.burst(x, y, { count: 4, color: '#8fa63a', size: [4, 8], dist: [10, 25], ms: 200, h: 0 });
+    }
+    for (const m of this.mines) {
+      const age = now - m.born;
+      m.model.light.setEnabled(Math.floor(now / 400) % 2 === 0); // blinking red light
+      if (age > MINE_LASTS_MS) {
+        m.gone = true;
+        continue;
+      }
+      // (A jumper in the air sails over it.)
+      const z = this.zombies.find((zz) => (zz.lift || 0) < 30 && Math.hypot(zz.x - m.x, zz.y - m.y) < zz.r + 16);
+      if (z) {
+        m.gone = true;
+        this.explode(m.x, m.y, MINE_BLAST, now);
+      }
+    }
+    for (const m of this.mines) if (m.gone) m.model.dispose();
+    this.mines = this.mines.filter((m) => !m.gone);
+  }
+
   // ---------- Points and the weapon box ----------
 
   drawPoints() {
@@ -837,12 +896,14 @@ export default class ZombieGame {
       if (!j || Math.hypot(x - j.x, y - j.y) > HOLE_MIN_DISTANCE * (boss ? 1.4 : 1)) break;
     }
     const j = this.closestJeep(x, y) || { x: W / 2, y: H / 2 };
+    if (!kind && this.wave >= JUMPER_FROM_WAVE && Math.random() < JUMPER_CHANCE) kind = 'jumper';
     if (!kind) {
       const fastChance = Math.min(FAST_CHANCE_MAX, FAST_CHANCE + FAST_CHANCE_PER_WAVE * (this.wave - 1));
       kind = Math.random() < fastChance ? 'fast' : 'slow';
     }
     const hits = {
       fast: 1,
+      jumper: JUMPER_HITS + Math.max(0, Math.floor((this.wave - JUMPER_FROM_WAVE) / 3)),
       slow: Math.min(SLOW_MAX_HITS, this.wave),
       boss: BOSS_HITS + BOSS_HITS_PER_WAVE * (this.wave - 1),
     }[kind];
@@ -852,8 +913,8 @@ export default class ZombieGame {
       kind,
       r: boss ? ZOMBIE_RADIUS * BOSS_SIZE : ZOMBIE_RADIUS,
       heading: Math.atan2(j.x - x, -(j.y - y)), // already looking at the jeep
-      speed: { fast: fastSpeed(this.wave), slow: between(...SLOW_SPEED), boss: BOSS_SPEED }[kind],
-      turn: { fast: FAST_TURN, slow: SLOW_TURN, boss: BOSS_TURN }[kind],
+      speed: { fast: fastSpeed(this.wave), slow: between(...SLOW_SPEED), jumper: 0, boss: BOSS_SPEED }[kind],
+      turn: { fast: FAST_TURN, slow: SLOW_TURN, jumper: JUMPER_TURN, boss: BOSS_TURN }[kind],
       hits,                        // hits it takes to knock out
       maxHits: hits,
       step: Math.random() * 10,    // where it is in its shuffle
@@ -924,6 +985,31 @@ export default class ZombieGame {
       }
     }
     this.holes = this.holes.filter((h) => !h.gone);
+  }
+
+  // A jumper: wait (turning to face the jeep), then hop toward it, land, wait again.
+  hop(z, now, s) {
+    if (!z.jump) {
+      z.lift = 0;
+      if (!z.jumpAt) z.jumpAt = now + JUMP_WAIT_MS * between(0.5, 1.2);
+      const j = this.closestJeep(z.x, z.y);
+      if (now < z.jumpAt || !j) return;
+      const d = Math.min(JUMP_DIST, Math.hypot(j.x - z.x, j.y - z.y) + 40);
+      z.heading = Math.atan2(j.x - z.x, -(j.y - z.y));
+      z.jump = { start: now, vx: Math.sin(z.heading) * d / JUMP_MS, vy: -Math.cos(z.heading) * d / JUMP_MS };
+      z.model.play('jump', 0.85);
+      return;
+    }
+    const t = Math.min(1, (now - z.jump.start) / JUMP_MS);
+    this.moveBy(z, z.r, z.jump.vx * s * 1000, z.jump.vy * s * 1000);
+    z.lift = Math.sin(t * Math.PI) * JUMP_HEIGHT;
+    if (t >= 1) {
+      z.jump = null;
+      z.lift = 0;
+      z.jumpAt = now + JUMP_WAIT_MS;
+      z.model.play('idle');
+      this.world.burst(z.x, z.y, { count: 5, color: '#c9a66b', size: [5, 10], dist: [20, 45], ms: 300, h: 0 });
+    }
   }
 
   // Zombies push each other apart so they don't all pile into one blob.
@@ -1099,6 +1185,7 @@ export default class ZombieGame {
         p.gone = true;
         if (p.kind === 'rescue') this.bringBackJeeps(now);
         else j.boost[p.kind] = now + BOOST_MS;
+        if (p.kind === 'mines') j.nextMineAt = now + 400; // first one straight away
         const { color, label } = p.kind === 'rescue' ? RESCUE : POTIONS[p.kind];
         this.world.burst(p.x, p.y, { count: 14, color, size: [6, 12], dist: [40, 100], ms: 500, h: 30 });
         this.popText(p.x, p.y - 30, label, color);
@@ -1191,6 +1278,8 @@ function makeMaterials(scene) {
     woodDark: m('woodDark', '#5e3d1d'),
     gold: m('gold', '#ffcc33', true),
     dozer: m('dozer', '#ffb81c'),
+    mine: m('mine', '#4a4f3a'),
+    mineLight: m('mineLight', '#ff3020', true),
   };
 }
 
@@ -1759,6 +1848,27 @@ function makePotion(game, color) {
   return bottle;
 }
 
+// A land mine: a flat dark-green disc with a blinking red light on top.
+function makeMine(game) {
+  const { scene } = game.world;
+  const mine = new BABYLON.TransformNode('mine', scene);
+  mine.parent = game.root;
+  const disc = BABYLON.MeshBuilder.CreateCylinder('mineDisc', { diameter: 32, height: 7, tessellation: 14 }, scene);
+  disc.material = game.mats.mine;
+  disc.position.y = 3.5;
+  disc.parent = mine;
+  const cap = BABYLON.MeshBuilder.CreateCylinder('mineCap', { diameter: 16, height: 4, tessellation: 12 }, scene);
+  cap.material = game.mats.gunDark;
+  cap.position.y = 9;
+  cap.parent = mine;
+  const light = BABYLON.MeshBuilder.CreateSphere('mineLight', { diameter: 7, segments: 6 }, scene);
+  light.material = game.mats.mineLight;
+  light.position.y = 12;
+  light.parent = mine;
+  mine.light = light;
+  return mine;
+}
+
 // The weapon box: a wooden crate with dark bands and a glowing gold lid.
 function makeBox(game) {
   const { scene } = game.world;
@@ -1792,6 +1902,8 @@ const ZOMBIE_MODELS = {
   slow: { model: 'zombieA', height: 112, anim: 'run', animSpeed: 0.45, shadow: 22 },
   fast: { model: 'zombieC', height: 106, anim: 'run', animSpeed: 1.2, shadow: 20 },
   boss: { model: 'boss', height: 210, anim: 'walk', animSpeed: 0.9, shadow: 52 },
+  // jumper - skin A again, tinted purple, a little smaller. Crouches (idle), then jumps.
+  jumper: { model: 'zombieA', height: 100, anim: 'idle', animSpeed: 1.4, shadow: 21, tint: new BABYLON.Color3(0.8, 0.55, 1.25) },
 };
 
 let shadowMaterial = null;
@@ -1806,6 +1918,7 @@ function makeZombie(game, kind = 'slow') {
   z.armPoses = armsForward(body, ARM_RIGS[info.model]);
   z.armPhase = Math.random() * Math.PI * 2;
   body.parent = z;
+  if (info.tint) paintModel(body, (c) => c.multiply(info.tint));
 
   // Soft shadow on the ground.
   if (!shadowMaterial || shadowMaterial.getScene() !== scene || shadowMaterial.isDisposed?.()) {
@@ -1819,6 +1932,7 @@ function makeZombie(game, kind = 'slow') {
   shadow.position.y = 0.6;
   shadow.material = shadowMaterial;
   shadow.parent = z;
+  z.shadow = shadow;
 
   // Play one of its animations on a loop (and stop the others).
   z.play = (name, speed = 1) => {
@@ -1840,7 +1954,7 @@ function makeZombie(game, kind = 'slow') {
 //           (just [arm] when the arm is one solid piece)
 //   droop - how far below level the arms point
 const ARM_BOB = 0.22;          // how far the arms swing up and down
-const ARM_BOB_SPEED = { slow: 4, fast: 9, boss: 3 }; // how quickly (bigger = faster)
+const ARM_BOB_SPEED = { slow: 4, fast: 9, jumper: 6, boss: 3 }; // how quickly (bigger = faster)
 
 const SURVIVOR_ARMS = {
   anim: /^(Left|Right)(Shoulder|Arm|ForeArm|Hand)/,
@@ -1893,7 +2007,10 @@ function armsForward(body, rig) {
 // Put a zombie in place (its own animation does the walking), and bob its
 // arms up and down - left and right taking turns, quicker for fast zombies.
 function placeZombie(game, z) {
-  z.model.position.copyFrom(game.world.at(z.x, z.y, -10));
+  const lift = z.lift || 0; // (a jumper in mid-air: its shadow stays on the ground)
+  z.model.position.copyFrom(game.world.at(z.x, z.y, -10 + lift));
+  z.model.shadow.position.y = 0.6 - lift;
+  z.model.shadow.scaling.setAll(1 - lift / (JUMP_HEIGHT * 2.5));
   const t = performance.now() / 1000 * ARM_BOB_SPEED[z.kind] + z.model.armPhase;
   for (const p of z.model.armPoses) {
     const k = (Math.sin(t + (p.side > 0 ? Math.PI : 0)) + 1) / 2;
