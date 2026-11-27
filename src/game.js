@@ -12,7 +12,7 @@
 // Shoot an asteroid past the OTHER player's line = 1 point.
 // When all rocks are gone, the higher score wins.
 // 10 hits destroys a ship; after 3 ships you're out and the other player wins.
-import Ship, { FIRE_EVERY_MS } from './ship.js';
+import Ship from './ship.js';
 import Rock from './rock.js';
 import { makePanel, button, el, SIDE_COLUMN } from './hud.js';
 import { glowMaterial } from './world.js';
@@ -20,9 +20,14 @@ import { glowMaterial } from './world.js';
 // How deep each player's strip is, as a share of the screen height
 // (0.25 = each player gets a quarter, the middle gets half).
 const STRIP_SHARE = 0.25;
-const ROCK_COUNT = 5;
-const HITS_TO_BREAK = 10;      // shots (any power) that break a big rock into 4 pieces
+// The 10 asteroids: a mix of sizes, shuffled each game.
+// (How many hits each size takes to break is in rock.js, SIZES.)
+const ROCK_SIZES = ['big', 'big', 'big', 'medium', 'medium', 'medium', 'medium', 'small', 'small', 'small'];
 const PIECE_SPREAD = 90;       // how fast the 4 pieces fly apart (sideways) when a rock breaks
+const LAVA_PUSH = 3;           // a fireball pushes 3 times harder than a normal hit
+const BLAST_RADIUS = 110;      // the ice blast explodes every rock this close to where it hits
+const BLAST_SPREAD = 220;      // exploded pieces fly sideways this fast...
+const BLAST_FLING = 340;       // ...and this fast toward the other player's line
 const BLUE = '#2ec4ff';
 const ORANGE = '#ff7a45';
 
@@ -61,13 +66,15 @@ export default class Game {
     blue.panel = makePanel(ui, blue, { top: false, y: H - STRIP, height: STRIP, width: W });
     orange.panel = makePanel(ui, orange, { top: true, y: 0, height: STRIP, width: W });
 
-    // --- Asteroids in a row across the middle ---
-    this.rocks = [];
-    for (let i = 0; i < ROCK_COUNT; i++) {
-      const x = W * (0.18 + i * (0.64 / (ROCK_COUNT - 1)));
-      const y = H / 2 + (i % 2 === 0 ? -30 : 30);
-      this.rocks.push(new Rock(this, x, y));
-    }
+    // --- Asteroids: two staggered rows of 5 across the middle ---
+    const sizes = shuffle([...ROCK_SIZES]);
+    this.rocks = sizes.map((size, i) => {
+      const row = i < 5 ? 0 : 1;
+      const col = i % 5;
+      const x = W * (row === 0 ? 0.13 : 0.21) + col * W * 0.17;
+      const y = H / 2 + (row === 0 ? -85 : 85);
+      return new Rock(this, x, y, { size });
+    });
 
     this.gameOver = false;
     this.setUpTouch();
@@ -115,11 +122,7 @@ export default class Game {
       ship.aimAt(p.x, p.y);
       if (!ship.alive) return;
       ship.firing = true;
-      const now = performance.now();
-      if (!this.gameOver && now - ship.lastShot > FIRE_EVERY_MS) {
-        ship.shoot(); // a quick tap fires right away
-        ship.lastShot = now;
-      }
+      if (!this.gameOver) ship.tryFire(performance.now()); // a quick tap fires right away
     };
     const move = (e) => {
       const ship = this.ships.find((s) => s.pointerId === e.pointerId);
@@ -151,6 +154,7 @@ export default class Game {
   // ---------- Every frame ----------
 
   update(now, dt) {
+    for (const ship of this.ships) ship.panel.update(now); // cool-down shading on the buttons
     if (this.gameOver) return;
     for (const ship of this.ships) ship.update(now, dt);
 
@@ -179,15 +183,7 @@ export default class Game {
       if (rock.scored) continue;
       const overTop = rock.y < this.topLineY;
       const overBottom = rock.y > this.bottomLineY;
-      if (!overTop && !overBottom) continue;
-
-      if (rock.isHot(now)) {
-        // Too hot to score: bounce back off the line.
-        rock.y = overTop ? this.topLineY : this.bottomLineY;
-        rock.vy = overTop ? Math.abs(rock.vy) : -Math.abs(rock.vy);
-      } else {
-        this.scorePoint(rock, overTop ? blue : orange);
-      }
+      if (overTop || overBottom) this.scorePoint(rock, overTop ? blue : orange);
     }
   }
 
@@ -205,14 +201,19 @@ export default class Game {
         const nx = dx / dist;
         const ny = dy / dist;
         // Push them apart so they don't overlap.
-        const overlap = (minDist - dist) / 2;
-        a.x += nx * overlap; a.y += ny * overlap;
-        b.x -= nx * overlap; b.y -= ny * overlap;
-        // Swap their speed along the line between them (only if moving together).
+        // Heavier rocks get moved less.
+        const total = a.mass + b.mass;
+        const overlap = minDist - dist;
+        a.x += nx * overlap * (b.mass / total); a.y += ny * overlap * (b.mass / total);
+        b.x -= nx * overlap * (a.mass / total); b.y -= ny * overlap * (a.mass / total);
+        // Bounce (only if moving toward each other): a small rock bounces off
+        // a big one hard, a big one hardly notices a small one.
         const closing = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
         if (closing < 0) {
-          a.vx -= closing * nx; a.vy -= closing * ny;
-          b.vx += closing * nx; b.vy += closing * ny;
+          const ka = 2 * b.mass / total * closing;
+          const kb = 2 * a.mass / total * closing;
+          a.vx -= ka * nx; a.vy -= ka * ny;
+          b.vx += kb * nx; b.vy += kb * ny;
         }
       }
     }
@@ -227,12 +228,11 @@ export default class Game {
         rock.zap(now);
         this.world.burst(rock.x, rock.y, { count: 8, color: '#ffe14d', size: [4, 8], dist: [rock.r, rock.r + 30], ms: 260 });
         break;
-      case 'freeze':
-        if (!rock.piece) this.shatter(rock);
-        else rock.pushFrom(bullet.x, bullet.y);
-        break;
+      case 'iceblast':
+        this.iceBlast(bullet);
+        return;
       case 'lava':
-        rock.pushFrom(bullet.x, bullet.y);
+        rock.pushFrom(bullet.x, bullet.y, LAVA_PUSH);
         rock.heat(now);
         this.world.burst(bullet.x, bullet.y, { count: 6, color: '#ff8a1f', size: [5, 10], dist: [20, 50], ms: 300 });
         break;
@@ -240,23 +240,51 @@ export default class Game {
         rock.pushFrom(bullet.x, bullet.y);
     }
 
-    // Any bullet chips a big rock: after HITS_TO_BREAK hits it breaks into 4 pieces.
+    // Any bullet chips a whole rock: after enough hits it breaks into 4 pieces
+    // (bigger rocks take more hits - see SIZES in rock.js).
     if (!rock.piece && !rock.scored) {
       rock.hits += 1;
-      if (rock.hits >= HITS_TO_BREAK) this.shatter(rock);
+      if (rock.hits >= rock.hitsToBreak) this.shatter(rock);
     }
   }
 
-  // A big rock breaks into 4 small icy pieces flying apart sideways.
-  // (Only sideways, so pieces don't drift over a line on their own -
-  // they keep whatever up/down speed the big rock already had.)
-  shatter(rock) {
+  // The charged ice blast explodes: every rock near it bursts into
+  // fast pieces flung toward the other player's line.
+  iceBlast(bullet) {
+    const forward = Math.sign(bullet.vy); // which way the blast was flying
+    for (const rock of this.rocks) {
+      if (rock.scored) continue;
+      if (Math.hypot(rock.x - bullet.x, rock.y - bullet.y) > BLAST_RADIUS + rock.r) continue;
+      if (!rock.piece) {
+        this.shatter(rock, forward);
+      } else {
+        // Already a piece: send it flying away from the blast and forward.
+        rock.zapUntil = 0;
+        rock.pushFrom(bullet.x, bullet.y, 3);
+        rock.vy += forward * BLAST_FLING;
+      }
+    }
+    this.world.burst(bullet.x, bullet.y, { count: 22, color: '#dff8ff', size: [8, 18], dist: [60, BLAST_RADIUS + 60], ms: 550 });
+    this.world.burst(bullet.x, bullet.y, { count: 10, color: '#6fc8ff', size: [6, 12], dist: [30, 90], ms: 400 });
+    this.world.shake(200, 6);
+  }
+
+  // A whole rock breaks into 4 small icy pieces.
+  // Normally they fly apart sideways only (so they don't drift over a line on
+  // their own). An ice blast (fling = +1 down / -1 up) throws them hard that way.
+  shatter(rock, fling = 0) {
+    const r = Math.round(rock.r * 0.5);
     for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-      const piece = new Rock(this, rock.x + dx * 22, rock.y + dy * 22, {
-        piece: true, vx: rock.vx + dx * PIECE_SPREAD, vy: rock.vy,
+      const piece = new Rock(this, rock.x + dx * r, rock.y + dy * r, {
+        piece: true,
+        r,
+        vx: rock.vx + dx * (fling ? BLAST_SPREAD : PIECE_SPREAD),
+        vy: fling ? fling * BLAST_FLING + dy * 40 : rock.vy,
       });
-      piece.zapUntil = rock.zapUntil; // keep any zap / heat it already had
-      piece.hotUntil = rock.hotUntil;
+      if (!fling) {
+        piece.zapUntil = rock.zapUntil; // keep any zap / heat it already had
+        piece.hotUntil = rock.hotUntil;
+      }
       this.rocks.push(piece);
     }
     this.world.burst(rock.x, rock.y, { count: 12, color: '#dff8ff', size: [5, 12], dist: [50, 90], ms: 450 });
@@ -339,4 +367,13 @@ export default class Game {
       dash.parent = this.root;
     }
   }
+}
+
+// Mix a list into random order.
+function shuffle(list) {
+  for (let i = list.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [list[i], list[j]] = [list[j], list[i]];
+  }
+  return list;
 }

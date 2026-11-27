@@ -32,9 +32,11 @@ export function makePanel(ui, ship, { top, y, height, width }) {
     b.textContent = POWERS[key].icon;
     b.style.height = `${gap - 10}px`;
     b.style.setProperty('--on', POWERS[key].color);
+    // Dark shade that shrinks away as the power's cool-down runs out.
+    b.cool = b.appendChild(el('div', 'cool'));
     b.addEventListener('pointerdown', (e) => {
       e.stopPropagation();
-      ship.power = key;
+      ship.setPower(key);
       draw();
       b.classList.add('pressed');
       setTimeout(() => b.classList.remove('pressed'), 90);
@@ -72,6 +74,13 @@ export function makePanel(ui, ship, { top, y, height, width }) {
   ship.onChange = draw;
 
   return {
+    // Every frame: shade each power button by how much cool-down is left.
+    update(now) {
+      for (const key of Object.keys(buttons)) {
+        const left = ship.cooldownLeft(key, now);
+        buttons[key].cool.style.height = `${Math.round(left * 100)}%`;
+      }
+    },
     setScore(n) {
       score.textContent = String(n);
       score.classList.remove('bump');

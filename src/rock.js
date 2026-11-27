@@ -3,33 +3,45 @@
 // a little speed and it keeps drifting. It bounces off the left and right
 // edges and off other rocks. It doesn't spin.
 //
+// Rocks come in 3 sizes (see SIZES). Bigger ones are heavier (pushed less)
+// and take more hits to break into 4 small pieces.
+//
 // Powers (see bullets.js):
-//   ⚡ zapped  - yellow, slows down for ZAP_MS
-//   ❄ shatter - a big rock breaks into 4 small pieces (done by the game)
-//   🔥 hot     - red, can't score until it cools down (fades back over HOT_MS)
+//   ⚡ zapped - yellow, slows right down for ZAP_MS
+//   ❄ ice    - the charged ice blast explodes rocks (done by the game)
+//   🔥 hot    - glows red for a while (just looks hot, it can still score)
 import { paint, setGlow, hex } from './world.js';
 
-const RADIUS = 42;            // hit circle of a big rock (small pieces are half)
+// The 3 sizes: r = radius in pixels, hits = bullets it takes to break it.
+export const SIZES = {
+  big:    { r: 52, hits: 15 },
+  medium: { r: 40, hits: 10 },
+  small:  { r: 29, hits: 6 },
+};
+
 const START_DRIFT = 25;       // slow sideways drift at the start (pixels/second)
-const PUSH = 22;              // speed added by each bullet hit ("heavy" = small number)
+const PUSH = 22;              // speed added by a bullet hit on a medium rock
 const PIECE_PUSH = 4;         // small pieces get pushed this many times harder
-const MAX_SPEED = 380;        // speed limit for big rocks
-const PIECE_MAX_SPEED = 600;  // small pieces can go faster
-const ZAP_MS = 3000;          // how long electric slows it
-const ZAP_KEEP = 0.3;         // while zapped, keeps only 30% of its speed each second
-export const HOT_MS = 6000;   // how long lava keeps it hot
+const MAX_SPEED = 380;        // speed limit for whole rocks
+const PIECE_MAX_SPEED = 600;  // pieces can go faster
+const ZAP_MS = 6000;          // how long electric slows it
+const ZAP_KEEP = 0.12;        // while zapped, keeps only 12% of its speed each second
+const HOT_MS = 6000;          // how long lava keeps it glowing red
 
 const ROCK = hex('#b8a89a');  // normal rock colour
-const ICE = hex('#aee8ff');   // colour of frozen pieces
+const ICE = hex('#aee8ff');   // colour of pieces
 const ZAP = hex('#ffe14d');   // electric yellow
 const HOT = hex('#ff3b1f');   // lava red
 
 export default class Rock {
-  constructor(game, x, y, { piece = false, vx = null, vy = 0 } = {}) {
+  // size = 'big' | 'medium' | 'small' for whole rocks; pieces pass piece: true and r.
+  constructor(game, x, y, { size = 'medium', piece = false, r = 20, vx = null, vy = 0 } = {}) {
     this.game = game;
     this.world = game.world;
     this.piece = piece;
-    this.r = piece ? RADIUS / 2 : RADIUS;
+    this.r = piece ? r : SIZES[size].r;
+    this.hitsToBreak = piece ? Infinity : SIZES[size].hits;
+    this.hits = 0;
     this.x = x;
     this.y = y;
 
@@ -44,7 +56,6 @@ export default class Rock {
     }
 
     this.scored = false;
-    this.hits = 0;          // bullets that hit it (10 breaks a big rock - see game.js)
     this.zapUntil = 0;
     this.hotUntil = 0;
     this.look = '';
@@ -58,11 +69,14 @@ export default class Rock {
     this.place();
   }
 
-  // A bullet hit at (bx, by): push away from the hit point.
-  pushFrom(bx, by) {
-    const strength = PUSH * (this.piece ? PIECE_PUSH : 1);
-    let dx = this.x - bx;
-    let dy = this.y - by;
+  // How heavy it is (for bumping into other rocks).
+  get mass() { return this.r * this.r; }
+
+  // A hit at (bx, by): push away from the hit point. power = how many times a normal push.
+  pushFrom(bx, by, power = 1) {
+    const strength = PUSH * power * (this.piece ? PIECE_PUSH : 40 / this.r);
+    const dx = this.x - bx;
+    const dy = this.y - by;
     const len = Math.hypot(dx, dy) || 1;
     this.vx += (dx / len) * strength;
     this.vy += (dy / len) * strength;
@@ -70,7 +84,6 @@ export default class Rock {
 
   zap(now) { this.zapUntil = now + ZAP_MS; }
   heat(now) { this.hotUntil = now + HOT_MS; }
-  isHot(now) { return now < this.hotUntil; }
 
   // Called every frame by the game.
   tick(now, dt) {

@@ -1,6 +1,8 @@
-// The screens (like pages of a website): Title, Settings and the Game.
+// The screens (like pages of a website): Title (pick a game), Settings,
+// and the games: Space Rocks (game.js) and Zombie Jeep (zombie.js).
 // Menus are plain HTML on top of the 3D view; only one screen shows at a time.
 import Game from './game.js';
+import ZombieGame from './zombie.js';
 import { button, el } from './hud.js';
 import { VERSION } from './version.js';
 import { checkForUpdate } from './update.js';
@@ -30,15 +32,19 @@ function titleScreen(world, ui) {
   ui.append(title);
 
   // A big 3D ship slowly turning, just for show.
-  const ship = world.spawn('ship', Math.min(W, H) * 0.3);
-  ship.position.copyFrom(world.at(W / 2, H * 0.4, 50));
+  const ship = world.spawn('ship', Math.min(W, H) * 0.24);
+  ship.position.copyFrom(world.at(W / 2, H * 0.38, 50));
   ship.rotation.x = -0.5;
   paint(ship, (c) => (Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b) > 0.3 ? hex('#2ec4ff') : c));
   const stopSpin = world.onFrame((now, dt) => { ship.rotation.y += dt * 0.0008; });
 
-  const start = button(ui, W / 2, H * 0.62, 'START', () => open(world, ui, gameScreen),
-    { width: 360, height: 140, fontSize: 64, color: '#2ecc71' });
-  start.classList.add('breathe');
+  // Pick a game: one small tile per game.
+  const pick = el('div', 'small');
+  pick.textContent = 'Pick a game';
+  Object.assign(pick.style, { left: `${W / 2}px`, top: `${H * 0.66 - 140}px`, transform: 'translateX(-50%)', fontSize: '28px', color: '#c9cdf0' });
+  ui.append(pick);
+  tile(ui, W / 2 - 140, H * 0.66, '🚀', 'Space Rocks', '#5b6ee1', () => open(world, ui, gameScreen));
+  tile(ui, W / 2 + 140, H * 0.66, '🧟', 'Zombie Jeep', '#3f8f3a', () => open(world, ui, zombieScreen));
 
   // Grown-up corner: settings, version number, update.
   button(ui, 104, H - 52, 'Settings', () => open(world, ui, settingsScreen),
@@ -122,7 +128,26 @@ function stepper(ui, W, key, y) {
   button(ui, W / 2 + 220, y + 10, '+', () => change(+1), { width: 100, height: 90, fontSize: 60, color: '#3a4070' });
 }
 
-// ---------- Game ----------
+// A small game tile: big picture, name underneath.
+function tile(ui, x, y, icon, name, color, onPress) {
+  const t = button(ui, x, y, '', onPress, { width: 240, height: 190, color });
+  t.classList.add('tile');
+  const pic = el('div', 'tile-icon');
+  pic.textContent = icon;
+  const label = el('div', 'tile-name');
+  label.textContent = name;
+  t.append(pic, label);
+}
+
+// ---------- Games ----------
+
+function zombieScreen(world, ui) {
+  const game = new ZombieGame(world, ui, {
+    onBack: () => open(world, ui, titleScreen),
+    onRestart: () => open(world, ui, zombieScreen),
+  });
+  return () => game.destroy();
+}
 
 function gameScreen(world, ui) {
   const game = new Game(world, ui, {

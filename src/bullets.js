@@ -1,8 +1,9 @@
 // The 3 bullet powers and what their bullets look like in 3D.
 //
-//   ⚡ Electric - a glowing yellow bolt:  zaps an asteroid, it turns yellow and slows down.
-//   ❄ Freeze   - an ice crystal:          shatters a big asteroid into 4 small, light pieces.
-//   🔥 Lava     - a fireball:              heats an asteroid red: it can't score until it cools.
+//   ⚡ Electric - a glowing yellow bolt:  zaps an asteroid, it turns yellow and nearly stops.
+//   ❄ Ice      - a big charged crystal:  explodes nearby asteroids into fast pieces.
+//   🔥 Lava     - a fireball:              big push, and the asteroid glows red hot.
+// (How each one fires - stream, charge-up, cool-downs - is in ship.js.)
 //
 // Every bullet has an outline in its ship's colour, so you can tell whose it is.
 import { hex, glowMaterial } from './world.js';
