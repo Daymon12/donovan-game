@@ -1,10 +1,10 @@
 // Zombie Jeep: you drive a jeep, seen from above, on a grassy field.
 //
-//   - Put a finger down anywhere: a joystick appears right under it. Slide
-//     the finger: the jeep turns that way and drives, faster the further
-//     you slide. Lift it: the joystick goes and the jeep stops.
-//     With two jeeps, the left half of the screen drives jeep 1 and the
-//     right half drives jeep 2.
+//   - Each jeep has a joystick in a bottom corner (jeep 1 left, jeep 2
+//     right). Push it: the jeep turns that way and drives, faster the
+//     further you push. Let go: the jeep stops.
+//   - Next to each joystick is a reverse button: hold it and the jeep backs
+//     up (push the joystick too, to steer its back end that way).
 //   - Zombies dig their way out of the ground (a hole opens, then a zombie
 //     climbs out) and chase the closest jeep. Don't let one touch you!
 //   - Waves: every 30 seconds a new wave starts, and each is harder:
@@ -33,8 +33,13 @@ import * as sound from './sound.js';
 const JEEP_TOP_SPEED = 300;    // pixels per second
 const JEEP_TURN = 5;           // how fast it turns (radians per second)
 const JEEP_BRAKE = 1400;       // how quickly it stops when you let go
-// Joysticks: one appears wherever a finger goes down.
+// Controls: a joystick in each bottom corner, with a reverse button beside it.
 const STICK_RADIUS = 80;       // how far the knob moves from the middle
+const STICK_MARGIN = 125;      // stick's middle, this far in from the corner
+const STICK_GRAB = 170;        // a touch this close to a stick grabs it
+const REVERSE_GAP = 190;       // reverse button's middle, this far along from the stick's
+const REVERSE_SIZE = 110;      // reverse button width / height
+const REVERSE_SPEED = 170;     // backing up is slower than driving forward
 const STICK_DEAD = 0.15;       // tiny pushes don't move the jeep
 const JEEP_RADIUS = 34;        // for bumping into zombies
 const JOIN_SAFE_MS = 2000;
@@ -128,7 +133,7 @@ export default class ZombieGame {
 
     // Jeep 1 starts in the middle, pointing up. Jeep 2 joins with the button.
     this.jeeps = [this.makeJeep(W / 2, H / 2, 'green')];
-    this.makeStick(this.jeeps[0], '#2ecc71');
+    this.makeControls(this.jeeps[0], 'left', '#2ecc71');
     this.shots = [];
 
     this.zombies = [];   // zombies out of the ground, chasing
@@ -225,7 +230,7 @@ export default class ZombieGame {
     const jeep = this.makeJeep(safest.x, safest.y, 'orange');
     jeep.safeUntil = performance.now() + JOIN_SAFE_MS;
     this.jeeps.push(jeep);
-    this.makeStick(jeep, '#ff9a3c');
+    this.makeControls(jeep, 'right', '#ff9a3c');
     this.joinButton.remove();
     this.world.burst(jeep.x, jeep.y, { count: 10, color: '#ffb347', size: [6, 12], dist: [40, 90], ms: 450 });
   }
@@ -265,18 +270,34 @@ export default class ZombieGame {
     return best;
   }
 
-  // ---------- Joysticks: push to drive, let go to stop ----------
+  // ---------- Controls: joystick + reverse button for each jeep ----------
 
-  // Jeep j's joystick (hidden until a finger goes down for it).
-  makeStick(j, color) {
+  // Jeep j's controls in the bottom corner on `side` ('left' or 'right'):
+  // the joystick in the corner, the reverse button beside it (toward the middle).
+  makeControls(j, side, color) {
+    const { W, H } = this.world;
+    const x = side === 'left' ? STICK_MARGIN : W - STICK_MARGIN;
+    const y = H - STICK_MARGIN;
     const base = el('div', 'stick');
-    Object.assign(base.style, { width: `${STICK_RADIUS * 2}px`, height: `${STICK_RADIUS * 2}px`, borderColor: color, display: 'none' });
+    Object.assign(base.style, { left: `${x}px`, top: `${y}px`, width: `${STICK_RADIUS * 2}px`, height: `${STICK_RADIUS * 2}px`, borderColor: color });
     const knob = el('div', 'stick-knob');
     knob.style.background = color;
     base.append(knob);
     this.ui.append(base);
+    j.stickAt = { x, y };
     j.stickEl = base;
     j.knob = knob;
+
+    const rx = x + (side === 'left' ? REVERSE_GAP : -REVERSE_GAP);
+    const ry = H - REVERSE_SIZE / 2 - 30;
+    const rev = el('div', 'reverse-btn');
+    rev.innerHTML = '<span>⬇</span>BACK';
+    Object.assign(rev.style, { left: `${rx}px`, top: `${ry}px`, width: `${REVERSE_SIZE}px`, height: `${REVERSE_SIZE}px`, borderColor: color });
+    this.ui.append(rev);
+    j.reverseAt = { x: rx, y: ry };
+    j.reverseEl = rev;
+    j.reversePointer = null;
+    j.reverse = false;
   }
 
   // The finger on jeep j's stick is at p: work out the push (0 in the
@@ -293,15 +314,18 @@ export default class ZombieGame {
   letGoStick(j) {
     j.stick = null;
     j.pointerId = null;
-    if (j.knob) {
-      j.knob.style.transform = 'translate(-50%, -50%)';
-      j.stickEl.style.display = 'none';
-    }
+    if (j.knob) j.knob.style.transform = 'translate(-50%, -50%)';
+    this.setReverse(j, false, null);
   }
 
-  // A finger going down puts a joystick right there. With two jeeps, the
-  // left half of the screen is jeep 1's and the right half is jeep 2's
-  // (if that jeep is caught or already driven, the other free one takes it).
+  setReverse(j, on, pointerId) {
+    j.reverse = on;
+    j.reversePointer = pointerId;
+    if (j.reverseEl) j.reverseEl.classList.toggle('held', on);
+  }
+
+  // A finger on a reverse button holds it down; a finger near a joystick
+  // takes that joystick. Each finger is tracked until it lifts.
   setUpTouch() {
     const { W, H } = this.world;
     const stage = document.getElementById('stage');
@@ -311,22 +335,33 @@ export default class ZombieGame {
     };
     const down = (e) => {
       const p = toScreen(e);
-      const free = this.liveJeeps().filter((j) => j.stickEl && j.pointerId === null);
+      for (const j of this.liveJeeps()) {
+        if (!j.reverseAt || j.reversePointer !== null) continue;
+        if (Math.abs(p.x - j.reverseAt.x) < REVERSE_SIZE * 0.65 && Math.abs(p.y - j.reverseAt.y) < REVERSE_SIZE * 0.65) {
+          this.setReverse(j, true, e.pointerId);
+          return;
+        }
+      }
+      const free = this.liveJeeps().filter((j) => j.stickAt && j.pointerId === null
+        && Math.hypot(p.x - j.stickAt.x, p.y - j.stickAt.y) < STICK_GRAB);
       if (!free.length) return;
-      const mine = this.jeeps[p.x < W / 2 ? 0 : 1];
-      const j = free.includes(mine) ? mine : free[0];
-      j.pointerId = e.pointerId;
-      j.stickAt = p;
-      Object.assign(j.stickEl.style, { left: `${p.x}px`, top: `${p.y}px`, display: '' });
-      this.pushStick(j, p);
+      free.sort((a, b) => Math.hypot(p.x - a.stickAt.x, p.y - a.stickAt.y) - Math.hypot(p.x - b.stickAt.x, p.y - b.stickAt.y));
+      free[0].pointerId = e.pointerId;
+      this.pushStick(free[0], p);
     };
     const move = (e) => {
       const j = this.jeeps.find((jj) => jj.pointerId === e.pointerId);
       if (j) this.pushStick(j, toScreen(e));
     };
     const up = (e) => {
-      const j = this.jeeps.find((jj) => jj.pointerId === e.pointerId);
-      if (j) this.letGoStick(j);
+      for (const j of this.jeeps) {
+        if (j.reversePointer === e.pointerId) this.setReverse(j, false, null);
+        if (j.pointerId === e.pointerId) {
+          j.stick = null;
+          j.pointerId = null;
+          j.knob.style.transform = 'translate(-50%, -50%)';
+        }
+      }
     };
     stage.addEventListener('pointerdown', down);
     window.addEventListener('pointermove', move);
@@ -371,7 +406,11 @@ export default class ZombieGame {
       setVisibility(j.model, now < j.safeUntil && Math.floor(now / 125) % 2 ? 0.35 : 1);
       j.model.shield.setEnabled(this.hasBoost(j, 'shield', now));
     }
-    for (const j of this.jeeps) if (j.stickEl) j.stickEl.style.opacity = j.out ? '0.3' : '';
+    for (const j of this.jeeps) {
+      if (!j.stickEl) continue;
+      j.stickEl.style.opacity = j.out ? '0.3' : '';
+      j.reverseEl.style.opacity = j.out ? '0.3' : '';
+    }
     this.followCamera(s);
     this.moveShots(s, now);
     this.updatePotions(now);
@@ -489,19 +528,30 @@ export default class ZombieGame {
   driveJeep(j, s, now) {
     const { W, H } = this.world;
     const push = j.stick ? Math.hypot(j.stick.x, j.stick.y) : 0;
-    if (push > STICK_DEAD) {
+    const boost = this.hasBoost(j, 'speed', now) ? SPEED_BOOST : 1;
+    if (j.reverse) {
+      // Backing up. Pushing the stick swings the jeep's back end that way.
+      if (push > STICK_DEAD) {
+        const want = Math.atan2(j.stick.x, -j.stick.y) + Math.PI;
+        let diff = want - j.heading;
+        diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+        j.heading += Math.max(-JEEP_TURN * s, Math.min(JEEP_TURN * s, diff));
+      }
+      const wantSpeed = -REVERSE_SPEED * boost;
+      j.speed += Math.max(-900 * s, Math.min(JEEP_BRAKE * s, wantSpeed - j.speed));
+    } else if (push > STICK_DEAD) {
       // Turn the way the stick points (heading 0 = up the screen, turning clockwise).
       const want = Math.atan2(j.stick.x, -j.stick.y);
       let diff = want - j.heading;
       diff = Math.atan2(Math.sin(diff), Math.cos(diff)); // shortest way round
       j.heading += Math.max(-JEEP_TURN * s, Math.min(JEEP_TURN * s, diff));
       // The further the push, the faster.
-      const top = JEEP_TOP_SPEED * (this.hasBoost(j, 'speed', now) ? SPEED_BOOST : 1);
+      const top = JEEP_TOP_SPEED * boost;
       const wantSpeed = top * Math.min(1, (push - STICK_DEAD) / (0.8 - STICK_DEAD));
       j.speed += Math.max(-JEEP_BRAKE * s, Math.min(900 * s, wantSpeed - j.speed));
     } else {
       // Stick let go (or in the middle): stop.
-      j.speed = Math.max(0, j.speed - JEEP_BRAKE * s);
+      j.speed -= Math.sign(j.speed) * Math.min(Math.abs(j.speed), JEEP_BRAKE * s);
     }
 
     j.x += Math.sin(j.heading) * j.speed * s;
@@ -524,7 +574,7 @@ export default class ZombieGame {
 
   // Tyre tracks from the two back wheels while the jeep is moving.
   leaveTracks(j) {
-    if (j.speed < 15) {
+    if (Math.abs(j.speed) < 15) {
       j.lastWheels = null;
       return;
     }
