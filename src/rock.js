@@ -43,6 +43,7 @@ export default class Rock {
     }
 
     this.scored = false;
+    this.hits = 0;          // bullets that hit it (20 breaks a big rock - see game.js)
     this.zapUntil = 0;
     this.hotUntil = 0;
     this.look = '';

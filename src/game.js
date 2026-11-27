@@ -21,6 +21,7 @@ import { glowMaterial } from './world.js';
 // (0.25 = each player gets a quarter, the middle gets half).
 const STRIP_SHARE = 0.25;
 const ROCK_COUNT = 5;
+const HITS_TO_BREAK = 20;      // shots (any power) that break a big rock into 4 pieces
 const BLUE = '#2ec4ff';
 const ORANGE = '#ff7a45';
 
@@ -236,6 +237,12 @@ export default class Game {
         break;
       default:
         rock.pushFrom(bullet.x, bullet.y);
+    }
+
+    // Any bullet chips a big rock: after HITS_TO_BREAK hits it breaks into 4 pieces.
+    if (!rock.piece && !rock.scored) {
+      rock.hits += 1;
+      if (rock.hits >= HITS_TO_BREAK) this.shatter(rock);
     }
   }
 
