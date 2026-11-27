@@ -2,7 +2,7 @@
 // Strategy: try the internet first (so updates show up right away),
 // and fall back to the saved copy when offline.
 // Bump CACHE when you want to force-refresh everything.
-const CACHE = 'donovan-v22';
+const CACHE = 'donovan-v23';
 
 const FILES = [
   './',

@@ -10,7 +10,8 @@
 //   - At the end of each wave a big boss zombie digs out. The next wave
 //     only starts once it's knocked out (it takes lots of hits).
 //   - Potion bottles pop up now and then. Drive over one for a power-up:
-//     blue = speed, yellow = rapid fire, purple = shield.
+//     blue = speed, yellow = rapid fire, purple = shield, orange = bulldozer
+//     (a blade on the front: drive into zombies to flatten them - not the boss!).
 //   - A gun turret on top of each jeep swings round by itself and shoots
 //     the closest zombie (if it's near enough).
 //   - Points: every zombie knocked out earns points (shown top left).
@@ -81,6 +82,7 @@ const POTIONS = {
   speed:  { color: '#3aa0ff', label: 'Speed!' },     // jeep drives much faster
   rapid:  { color: '#ffd84d', label: 'Rapid fire!' }, // gun shoots much faster
   shield: { color: '#b46bff', label: 'Shield!' },    // zombies can't get you
+  dozer:  { color: '#ff8c1a', label: 'Bulldozer!' }, // blade on the front flattens zombies (not the boss)
 };
 // Rescue potion: only shows up while a jeep is caught. Grab it and that jeep comes back.
 const RESCUE = { color: '#ff4d6d', label: 'Rescue!' };
@@ -251,7 +253,7 @@ export default class ZombieGame {
       weapon: 'gun',       // see WEAPONS
       out: false,          // caught by a zombie
       safeUntil: 0,
-      boost: { speed: 0, rapid: 0, shield: 0 }, // when each power-up runs out
+      boost: { speed: 0, rapid: 0, shield: 0, dozer: 0 }, // when each power-up runs out
       model: makeJeep(this, paint),
     };
   }
@@ -393,6 +395,7 @@ export default class ZombieGame {
       // Blink while safe after joining.
       setVisibility(j.model, now < j.safeUntil && Math.floor(now / 125) % 2 ? 0.35 : 1);
       j.model.shield.setEnabled(this.hasBoost(j, 'shield', now));
+      j.model.blade.setEnabled(this.hasBoost(j, 'dozer', now));
     }
     this.followCamera(s);
     this.moveShots(s, now);
@@ -431,6 +434,15 @@ export default class ZombieGame {
       z.step += s * (2 + z.speed / 12); // quicker zombies take quicker steps
       z.model.rotation.y = z.heading;
       placeZombie(this, z);
+      // Bulldozer: any zombie the jeep runs into is flattened (the boss is too big).
+      const dozer = z.kind !== 'boss' && this.liveJeeps().find((j) => this.hasBoost(j, 'dozer', now)
+        && Math.hypot(z.x - j.x, z.y - j.y) < (JEEP_RADIUS + z.r) * 1.05);
+      if (dozer) {
+        this.world.burst(z.x, z.y, { count: 8, color: '#ffb347', size: [6, 12], dist: [30, 80], ms: 350 });
+        this.world.shake(120, 4);
+        this.hurtZombie(z, z.hits, 0, 0, now);
+        continue;
+      }
       for (const j of this.liveJeeps()) {
         if (now < j.safeUntil || this.hasBoost(j, 'shield', now)) continue;
         if (Math.hypot(z.x - j.x, z.y - j.y) < (JEEP_RADIUS + z.r) * 0.85) {
@@ -478,7 +490,7 @@ export default class ZombieGame {
       this.stopSteering(j);
       Object.assign(j, {
         x: spot.x, y: spot.y, out: false, speed: 0,
-        lastWheels: null, safeUntil: now + JOIN_SAFE_MS, boost: { speed: 0, rapid: 0, shield: 0 },
+        lastWheels: null, safeUntil: now + JOIN_SAFE_MS, boost: { speed: 0, rapid: 0, shield: 0, dozer: 0 },
       });
       j.model.setEnabled(true);
       j.model.position.copyFrom(this.world.at(j.x, j.y, 0));
@@ -1178,6 +1190,7 @@ function makeMaterials(scene) {
     wood: m('wood', '#9a6a35'),
     woodDark: m('woodDark', '#5e3d1d'),
     gold: m('gold', '#ffcc33', true),
+    dozer: m('dozer', '#ffb81c'),
   };
 }
 
@@ -1549,6 +1562,28 @@ function makeJeep(game, paint) {
   shield.parent = jeep;
   shield.setEnabled(false);
   jeep.shield = shield;
+
+  // Bulldozer blade on the front (only shown with the bulldozer potion):
+  // a wide yellow blade with a dark edge, held on by two arms.
+  const blade = new BABYLON.TransformNode('blade', scene);
+  blade.parent = jeep;
+  const plate = BABYLON.MeshBuilder.CreateBox('bladePlate', { width: 104, height: 30, depth: 9 }, scene);
+  plate.material = M.dozer;
+  plate.position.set(0, 16, 64);
+  plate.rotation.x = -0.25; // tipped forward a little
+  plate.parent = blade;
+  const edge = BABYLON.MeshBuilder.CreateBox('bladeEdge', { width: 106, height: 6, depth: 11 }, scene);
+  edge.material = M.gunDark;
+  edge.position.set(0, 3, 67);
+  edge.parent = blade;
+  for (const x of [-26, 26]) {
+    const arm = BABYLON.MeshBuilder.CreateBox('bladeArm', { width: 7, height: 7, depth: 26 }, scene);
+    arm.material = M.gun;
+    arm.position.set(x, 16, 50);
+    arm.parent = blade;
+  }
+  blade.setEnabled(false);
+  jeep.blade = blade;
   jeep.wheels = [];
   return jeep;
 }
