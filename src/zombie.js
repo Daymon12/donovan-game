@@ -1,7 +1,10 @@
 // Zombie Jeep: you drive a jeep, seen from above, on a grassy field.
 //
-//   - Hold your finger on the screen: the jeep drives toward your finger.
-//   - Let go: the jeep stops.
+//   - Put a finger down anywhere: a joystick appears right under it. Slide
+//     the finger: the jeep turns that way and drives, faster the further
+//     you slide. Lift it: the joystick goes and the jeep stops.
+//     With two jeeps, the left half of the screen drives jeep 1 and the
+//     right half drives jeep 2.
 //   - Zombies dig their way out of the ground (a hole opens, then a zombie
 //     climbs out) and chase the closest jeep. Don't let one touch you!
 //   - Waves: every 30 seconds a new wave starts, and each is harder:
@@ -18,9 +21,9 @@
 //     the jeeps (the middle of both, with two players), and the two jeeps
 //     can't drive further apart than the screen is wide.
 //   - A second player can tap "+ Jeep 2" to join with an orange jeep.
-//     Each finger drives the jeep closest to where it touches.
-//     If a zombie gets one jeep, the other keeps going; if it beats the boss,
-//     the caught jeep comes back. Game over when both are out.
+//     If a zombie gets one jeep, the other keeps going, and a red rescue
+//     potion pops up: grab it (or beat the boss) and the caught jeep comes
+//     back. Game over when both are out.
 //
 // The jeeps and zombies are built from 3D blocks right here in code.
 import { button, el } from './hud.js';
@@ -30,6 +33,9 @@ import * as sound from './sound.js';
 const JEEP_TOP_SPEED = 300;    // pixels per second
 const JEEP_TURN = 5;           // how fast it turns (radians per second)
 const JEEP_BRAKE = 1400;       // how quickly it stops when you let go
+// Joysticks: one appears wherever a finger goes down.
+const STICK_RADIUS = 80;       // how far the knob moves from the middle
+const STICK_DEAD = 0.15;       // tiny pushes don't move the jeep
 const JEEP_RADIUS = 34;        // for bumping into zombies
 const JOIN_SAFE_MS = 2000;
 const REAR_AXLE = 22;          // back wheels: this far behind the jeep's middle...
@@ -77,6 +83,10 @@ const POTIONS = {
   rapid:  { color: '#ffd84d', label: 'Rapid fire!' }, // gun shoots much faster
   shield: { color: '#b46bff', label: 'Shield!' },    // zombies can't get you
 };
+// Rescue potion: only shows up while a jeep is caught. Grab it and that jeep comes back.
+const RESCUE = { color: '#ff4d6d', label: 'Rescue!' };
+const RESCUE_AFTER_MS = 4000;   // pops up this long after a jeep is caught (or after the last one vanished)
+const RESCUE_LASTS_MS = 15000;
 const SPEED_BOOST = 1.6;        // top speed x1.6 with the speed potion
 const RAPID_FIRE_MS = 200;      // time between shots with the rapid-fire potion
 const HOLE_MS = 900;           // a hole takes this long to open...
@@ -118,6 +128,7 @@ export default class ZombieGame {
 
     // Jeep 1 starts in the middle, pointing up. Jeep 2 joins with the button.
     this.jeeps = [this.makeJeep(W / 2, H / 2, 'green')];
+    this.makeStick(this.jeeps[0], '#2ecc71');
     this.shots = [];
 
     this.zombies = [];   // zombies out of the ground, chasing
@@ -191,8 +202,8 @@ export default class ZombieGame {
       x, y,
       heading: 0,          // which way it points (0 = up the screen)
       speed: 0,
-      finger: null,        // where its driver's finger is (null = not touching)
-      pointerId: null,     // which finger is driving it
+      stick: null,         // joystick push, x and y from -1 to 1 (null = not touching)
+      pointerId: null,     // which finger is on its joystick
       turretAim: 0,        // which way its gun points on screen
       lastShot: 0,
       out: false,          // caught by a zombie
@@ -214,6 +225,7 @@ export default class ZombieGame {
     const jeep = this.makeJeep(safest.x, safest.y, 'orange');
     jeep.safeUntil = performance.now() + JOIN_SAFE_MS;
     this.jeeps.push(jeep);
+    this.makeStick(jeep, '#ff9a3c');
     this.joinButton.remove();
     this.world.burst(jeep.x, jeep.y, { count: 10, color: '#ffb347', size: [6, 12], dist: [40, 90], ms: 450 });
   }
@@ -253,36 +265,68 @@ export default class ZombieGame {
     return best;
   }
 
-  // ---------- Touch: hold to drive, let go to stop ----------
+  // ---------- Joysticks: push to drive, let go to stop ----------
 
-  // Each new finger takes the closest jeep that nobody is driving yet.
+  // Jeep j's joystick (hidden until a finger goes down for it).
+  makeStick(j, color) {
+    const base = el('div', 'stick');
+    Object.assign(base.style, { width: `${STICK_RADIUS * 2}px`, height: `${STICK_RADIUS * 2}px`, borderColor: color, display: 'none' });
+    const knob = el('div', 'stick-knob');
+    knob.style.background = color;
+    base.append(knob);
+    this.ui.append(base);
+    j.stickEl = base;
+    j.knob = knob;
+  }
+
+  // The finger on jeep j's stick is at p: work out the push (0 in the
+  // middle, 1 at the rim) and move the knob there.
+  pushStick(j, p) {
+    let x = (p.x - j.stickAt.x) / STICK_RADIUS;
+    let y = (p.y - j.stickAt.y) / STICK_RADIUS;
+    const len = Math.hypot(x, y);
+    if (len > 1) { x /= len; y /= len; }
+    j.stick = { x, y };
+    j.knob.style.transform = `translate(calc(-50% + ${x * STICK_RADIUS}px), calc(-50% + ${y * STICK_RADIUS}px))`;
+  }
+
+  letGoStick(j) {
+    j.stick = null;
+    j.pointerId = null;
+    if (j.knob) {
+      j.knob.style.transform = 'translate(-50%, -50%)';
+      j.stickEl.style.display = 'none';
+    }
+  }
+
+  // A finger going down puts a joystick right there. With two jeeps, the
+  // left half of the screen is jeep 1's and the right half is jeep 2's
+  // (if that jeep is caught or already driven, the other free one takes it).
   setUpTouch() {
     const { W, H } = this.world;
     const stage = document.getElementById('stage');
-    const toBoard = (e) => {
+    const toScreen = (e) => {
       const r = stage.getBoundingClientRect();
-      // Where on the SCREEN. The view moves, so each frame the jeep heads for
-      // whatever bit of the field is under the finger right then.
       return { x: (e.clientX - r.left) * W / r.width, y: (e.clientY - r.top) * H / r.height };
     };
     const down = (e) => {
-      const p = toBoard(e);
-      const q = { x: p.x + this.world.cameraX, y: p.y }; // that spot on the field
-      const free = this.liveJeeps().filter((j) => j.pointerId === null);
+      const p = toScreen(e);
+      const free = this.liveJeeps().filter((j) => j.stickEl && j.pointerId === null);
       if (!free.length) return;
-      free.sort((a, b) => Math.hypot(a.x - q.x, a.y - q.y) - Math.hypot(b.x - q.x, b.y - q.y));
-      free[0].pointerId = e.pointerId;
-      free[0].finger = p;
+      const mine = this.jeeps[p.x < W / 2 ? 0 : 1];
+      const j = free.includes(mine) ? mine : free[0];
+      j.pointerId = e.pointerId;
+      j.stickAt = p;
+      Object.assign(j.stickEl.style, { left: `${p.x}px`, top: `${p.y}px`, display: '' });
+      this.pushStick(j, p);
     };
     const move = (e) => {
       const j = this.jeeps.find((jj) => jj.pointerId === e.pointerId);
-      if (j) j.finger = toBoard(e);
+      if (j) this.pushStick(j, toScreen(e));
     };
     const up = (e) => {
       const j = this.jeeps.find((jj) => jj.pointerId === e.pointerId);
-      if (!j) return;
-      j.pointerId = null;
-      j.finger = null;
+      if (j) this.letGoStick(j);
     };
     stage.addEventListener('pointerdown', down);
     window.addEventListener('pointermove', move);
@@ -327,6 +371,7 @@ export default class ZombieGame {
       setVisibility(j.model, now < j.safeUntil && Math.floor(now / 125) % 2 ? 0.35 : 1);
       j.model.shield.setEnabled(this.hasBoost(j, 'shield', now));
     }
+    for (const j of this.jeeps) if (j.stickEl) j.stickEl.style.opacity = j.out ? '0.3' : '';
     this.followCamera(s);
     this.moveShots(s, now);
     this.updatePotions(now);
@@ -394,11 +439,23 @@ export default class ZombieGame {
     this.world.shake(400, 14);
     this.popText(boss.x, boss.y - 40, 'Boss down!', '#ffd84d');
     // A jeep that got caught comes back: its partner made it through the wave.
+    this.bringBackJeeps(now);
+    this.phase = 'break';
+    const trackMs = sound.duration('wave') * 1000;
+    this.breakEnds = now + trackMs;
+    this.quietUntil = now + trackMs;
+    this.music.stop();
+    this.music = sound.play('wave');
+  }
+
+  // Every caught jeep comes back (somewhere safe on screen, blinking for a moment).
+  bringBackJeeps(now) {
     for (const j of this.jeeps) {
       if (!j.out) continue;
       const spot = this.safeSpot();
+      this.letGoStick(j);
       Object.assign(j, {
-        x: spot.x, y: spot.y, out: false, speed: 0, finger: null, pointerId: null,
+        x: spot.x, y: spot.y, out: false, speed: 0,
         lastWheels: null, safeUntil: now + JOIN_SAFE_MS, boost: { speed: 0, rapid: 0, shield: 0 },
       });
       j.model.setEnabled(true);
@@ -406,12 +463,6 @@ export default class ZombieGame {
       this.world.burst(j.x, j.y, { count: 12, color: '#ffd84d', size: [6, 12], dist: [40, 100], ms: 500 });
       this.popText(j.x, j.y - 50, 'Back!', '#ffd84d');
     }
-    this.phase = 'break';
-    const trackMs = sound.duration('wave') * 1000;
-    this.breakEnds = now + trackMs;
-    this.quietUntil = now + trackMs;
-    this.music.stop();
-    this.music = sound.play('wave');
   }
 
   // Big "Wave 2!" across the middle when a new wave starts.
@@ -437,25 +488,19 @@ export default class ZombieGame {
 
   driveJeep(j, s, now) {
     const { W, H } = this.world;
-    if (j.finger) {
-      const dx = j.finger.x + this.world.cameraX - j.x; // (finger is on the screen; the view moves)
-      const dy = j.finger.y - j.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist > 6) {
-        // Turn toward the finger (heading 0 = up the screen, turning clockwise).
-        const want = Math.atan2(dx, -dy);
-        let diff = want - j.heading;
-        diff = Math.atan2(Math.sin(diff), Math.cos(diff)); // shortest way round
-        j.heading += Math.max(-JEEP_TURN * s, Math.min(JEEP_TURN * s, diff));
-        // Speed up, but slow down when nearly at the finger.
-        const top = JEEP_TOP_SPEED * (this.hasBoost(j, 'speed', now) ? SPEED_BOOST : 1);
-        const wantSpeed = Math.min(top, dist * 4);
-        j.speed += Math.max(-JEEP_BRAKE * s, Math.min(900 * s, wantSpeed - j.speed));
-      } else {
-        j.speed = Math.max(0, j.speed - JEEP_BRAKE * s);
-      }
+    const push = j.stick ? Math.hypot(j.stick.x, j.stick.y) : 0;
+    if (push > STICK_DEAD) {
+      // Turn the way the stick points (heading 0 = up the screen, turning clockwise).
+      const want = Math.atan2(j.stick.x, -j.stick.y);
+      let diff = want - j.heading;
+      diff = Math.atan2(Math.sin(diff), Math.cos(diff)); // shortest way round
+      j.heading += Math.max(-JEEP_TURN * s, Math.min(JEEP_TURN * s, diff));
+      // The further the push, the faster.
+      const top = JEEP_TOP_SPEED * (this.hasBoost(j, 'speed', now) ? SPEED_BOOST : 1);
+      const wantSpeed = top * Math.min(1, (push - STICK_DEAD) / (0.8 - STICK_DEAD));
+      j.speed += Math.max(-JEEP_BRAKE * s, Math.min(900 * s, wantSpeed - j.speed));
     } else {
-      // Finger lifted: stop.
+      // Stick let go (or in the middle): stop.
       j.speed = Math.max(0, j.speed - JEEP_BRAKE * s);
     }
 
@@ -838,18 +883,20 @@ export default class ZombieGame {
     const { W, H } = this.world;
     if (now >= this.nextPotionAt) {
       this.nextPotionAt = now + between(...POTION_EVERY_MS);
-      const kind = pick(Object.keys(POTIONS));
-      let x;
-      let y;
-      for (let tries = 0; tries < 20; tries++) {
-        x = this.spotOnScreen(80);
-        y = between(140, H - 80);
-        const j = this.closestJeep(x, y);
-        if (!j || Math.hypot(x - j.x, y - j.y) > 200) break;
+      this.spawnPotion(pick(Object.keys(POTIONS)), now);
+    }
+    // While a jeep is caught, a rescue potion pops up (a new one if it vanishes).
+    const someoneCaught = this.jeeps.some((j) => j.out);
+    const rescueOut = this.potions.some((p) => p.kind === 'rescue');
+    if (!someoneCaught) {
+      this.nextRescueAt = 0;
+      for (const p of this.potions) if (p.kind === 'rescue') p.gone = true; // nobody needs it now
+    } else if (!rescueOut) {
+      if (!this.nextRescueAt) this.nextRescueAt = now + RESCUE_AFTER_MS;
+      else if (now >= this.nextRescueAt) {
+        this.nextRescueAt = 0;
+        this.spawnPotion('rescue', now);
       }
-      const model = makePotion(this, POTIONS[kind].color);
-      this.potions.push({ kind, x, y, born: now, model });
-      this.world.burst(x, y, { count: 8, color: POTIONS[kind].color, size: [5, 10], dist: [30, 60], ms: 400, h: 20 });
     }
 
     for (const p of this.potions) {
@@ -858,15 +905,16 @@ export default class ZombieGame {
       p.model.position.copyFrom(this.world.at(p.x, p.y, 20 + Math.sin(age / 200) * 8));
       p.model.rotation.y = age / 500;
       // Blink in its last 2 seconds, then vanish.
-      const blinking = age > POTION_LASTS_MS - 2000;
+      const blinking = age > p.lasts - 2000;
       setVisibility(p.model, blinking && Math.floor(age / 150) % 2 ? 0.25 : 1);
-      if (age > POTION_LASTS_MS) p.gone = true;
+      if (age > p.lasts) p.gone = true;
 
       const j = this.liveJeeps().find((jj) => Math.hypot(jj.x - p.x, jj.y - p.y) < JEEP_RADIUS + 26);
       if (j && !p.gone) {
         p.gone = true;
-        j.boost[p.kind] = now + BOOST_MS;
-        const { color, label } = POTIONS[p.kind];
+        if (p.kind === 'rescue') this.bringBackJeeps(now);
+        else j.boost[p.kind] = now + BOOST_MS;
+        const { color, label } = p.kind === 'rescue' ? RESCUE : POTIONS[p.kind];
         this.world.burst(p.x, p.y, { count: 14, color, size: [6, 12], dist: [40, 100], ms: 500, h: 30 });
         this.popText(p.x, p.y - 30, label, color);
       }
@@ -875,13 +923,31 @@ export default class ZombieGame {
     this.potions = this.potions.filter((p) => !p.gone);
   }
 
+  // A bottle pops up on the screen, away from the jeeps.
+  spawnPotion(kind, now) {
+    const { H } = this.world;
+    const color = kind === 'rescue' ? RESCUE.color : POTIONS[kind].color;
+    let x;
+    let y;
+    for (let tries = 0; tries < 20; tries++) {
+      x = this.spotOnScreen(80);
+      y = between(140, H - 80);
+      const j = this.closestJeep(x, y);
+      if (!j || Math.hypot(x - j.x, y - j.y) > 200) break;
+    }
+    const model = makePotion(this, color);
+    if (kind === 'rescue') model.scaling.scaleInPlace(1.35); // a bit bigger, easy to spot
+    const lasts = kind === 'rescue' ? RESCUE_LASTS_MS : POTION_LASTS_MS;
+    this.potions.push({ kind, x, y, born: now, model, lasts });
+    this.world.burst(x, y, { count: 8, color, size: [5, 10], dist: [30, 60], ms: 400, h: 20 });
+  }
+
   // ---------- Getting caught ----------
 
   // A zombie got jeep j. It's out; when no jeeps are left, the game is over.
   crash(j, zombie, now) {
     j.out = true;
-    j.pointerId = null;
-    j.finger = null;
+    this.letGoStick(j);
     this.world.burst((j.x + zombie.x) / 2, (j.y + zombie.y) / 2, { count: 14, color: '#7bd44a', size: [8, 18], dist: [50, 140], ms: 650 });
     this.world.burst(j.x, j.y, { count: 8, color: '#ffd84d', size: [8, 14], dist: [30, 100], ms: 500 });
     this.world.shake(350, 12);
