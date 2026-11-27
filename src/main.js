@@ -1,6 +1,7 @@
 // Entry point: sizes the game to the screen, starts the 3D world, shows the title.
 import { createWorld } from './world.js';
 import { showTitle } from './screens.js';
+import * as sound from './sound.js';
 
 // The game's size matches the shape of the screen it starts on, so it fills
 // the whole iPad with no empty bands. The short side is always 834
@@ -30,7 +31,10 @@ fit();
 window.addEventListener('resize', fit);
 
 ui.innerHTML = '<div class="title" style="top:45%">Loading...</div>';
-const world = await createWorld(document.getElementById('view'), W, H);
+const [world] = await Promise.all([
+  createWorld(document.getElementById('view'), W, H),
+  sound.loadAll(),
+]);
 window.world = world; // for testing from the browser console
 showTitle(world, ui);
 

@@ -13,6 +13,12 @@ const MODELS = {
   ship: 'craft_speederA.glb',     // Kenney Space Kit (CC0)
   rock: 'meteor_detailed.glb',
   piece: 'meteor.glb',
+  suv: 'cars/suv.glb',            // Kenney Car Kit (CC0) - the jeep
+  zombieA: 'zombies/zombie-a.glb', // Kenney Animated Characters Survivors (CC0) - slow zombie
+  zombieC: 'zombies/zombie-c.glb', //   ...other skin - fast zombie
+  boss: 'graveyard/character-zombie.glb', // Kenney Graveyard Kit (CC0) - boss zombie
+  pine: 'graveyard/pine.glb',     //   ...trees round the edge of the field
+  pineCrooked: 'graveyard/pine-crooked.glb',
 };
 
 export async function createWorld(canvas, W, H) {
@@ -56,21 +62,39 @@ export async function createWorld(canvas, W, H) {
   const world = {
     engine, scene, camera, W, H,
 
+    // Where the board's left edge is in the 3D world, and where the camera
+    // is looking (Zombie Jeep slides these over when you drive into a new area).
+    originX: 0,
+    cameraX: 0,
+
     // Board spot (x, y) -> 3D position. h = height above the board.
     at(x, y, h = 0) {
-      return new BABYLON.Vector3(x - W / 2, h, H / 2 - y);
+      return new BABYLON.Vector3(x + world.originX - W / 2, h, H / 2 - y);
     },
 
-    // A fresh copy of a Kenney model, centred, `size` pixels across.
+    // A fresh copy of a Kenney model, centred, `size` pixels across
+    // (or `size` pixels tall with { by: 'height' }, for characters).
     // Each copy has its own colours, so it can be painted on its own.
-    spawn(name, size) {
+    // Animated models get pivot.anims = { run: AnimationGroup, ... }.
+    spawn(name, size, { by = 'across' } = {}) {
       const m = models[name];
       const copy = m.container.instantiateModelsToScene((n) => n, true, { doNotInstantiate: true });
       const root = copy.rootNodes[0];
       const pivot = new BABYLON.TransformNode(name, scene);
       root.parent = pivot;
-      root.position.subtractInPlace(m.center);
-      pivot.scaling.setAll(size / m.across);
+      if (by === 'height') {
+        // Characters stand on the ground: centre them sideways only.
+        root.position.subtractInPlace(new BABYLON.Vector3(m.center.x, m.min.y, m.center.z));
+      } else {
+        root.position.subtractInPlace(m.center);
+      }
+      pivot.scaling.setAll(size / (by === 'height' ? m.size.y : m.across));
+      pivot.anims = {};
+      for (const g of copy.animationGroups) {
+        g.stop();
+        pivot.anims[g.name.replace(/^Clone of /, '')] = g;
+      }
+      pivot.onDisposeObservable.add(() => copy.animationGroups.forEach((g) => g.dispose()));
       return pivot;
     },
 
@@ -120,9 +144,9 @@ export async function createWorld(canvas, W, H) {
     shake(ms = 250, amount = 8) {
       world.animate(ms, (t) => {
         const k = amount * (1 - t);
-        camera.position.x = (Math.random() - 0.5) * 2 * k;
+        camera.position.x = world.cameraX + (Math.random() - 0.5) * 2 * k;
         camera.position.z = (Math.random() - 0.5) * 2 * k;
-      }, () => { camera.position.x = 0; camera.position.z = 0; });
+      }, () => { camera.position.x = world.cameraX; camera.position.z = 0; });
     },
   };
 
@@ -194,6 +218,7 @@ async function loadModel(scene, file) {
   const size = max.subtract(min);
   return {
     container,
+    min,
     center: min.add(max).scale(0.5),
     across: Math.max(size.x, size.z), // widest side seen from above
     size,

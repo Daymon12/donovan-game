@@ -7,7 +7,6 @@ import { button, el } from './hud.js';
 import { VERSION } from './version.js';
 import { checkForUpdate } from './update.js';
 import * as settings from './settings.js';
-import { paint, hex } from './world.js';
 
 let leave = () => {}; // cleans up the current screen
 
@@ -31,20 +30,14 @@ function titleScreen(world, ui) {
   title.style.top = `${H * 0.2}px`;
   ui.append(title);
 
-  // A big 3D ship slowly turning, just for show.
-  const ship = world.spawn('ship', Math.min(W, H) * 0.24);
-  ship.position.copyFrom(world.at(W / 2, H * 0.38, 50));
-  ship.rotation.x = -0.5;
-  paint(ship, (c) => (Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b) > 0.3 ? hex('#2ec4ff') : c));
-  const stopSpin = world.onFrame((now, dt) => { ship.rotation.y += dt * 0.0008; });
-
   // Pick a game: one small tile per game.
+  const tilesY = H * 0.5;
   const pick = el('div', 'small');
   pick.textContent = 'Pick a game';
-  Object.assign(pick.style, { left: `${W / 2}px`, top: `${H * 0.66 - 140}px`, transform: 'translateX(-50%)', fontSize: '28px', color: '#c9cdf0' });
+  Object.assign(pick.style, { left: `${W / 2}px`, top: `${tilesY - 140}px`, transform: 'translateX(-50%)', fontSize: '28px', color: '#c9cdf0' });
   ui.append(pick);
-  tile(ui, W / 2 - 140, H * 0.66, '🚀', 'Space Rocks', '#5b6ee1', () => open(world, ui, gameScreen));
-  tile(ui, W / 2 + 140, H * 0.66, '🧟', 'Zombie Jeep', '#3f8f3a', () => open(world, ui, zombieScreen));
+  tile(ui, W / 2 - 140, tilesY, '🚀', 'Space Rocks', '#5b6ee1', () => open(world, ui, gameScreen));
+  tile(ui, W / 2 + 140, tilesY, '🧟', 'Zombie Jeep', '#3f8f3a', () => open(world, ui, zombieScreen));
 
   // Grown-up corner: settings, version number, update.
   button(ui, 104, H - 52, 'Settings', () => open(world, ui, settingsScreen),
@@ -68,11 +61,6 @@ function titleScreen(world, ui) {
     status.textContent = result.message;
     if (!result.reloading) busy = false;
   }, { width: 160, height: 56, fontSize: 24, color: '#3a4070' });
-
-  return () => {
-    stopSpin();
-    ship.dispose(false, true);
-  };
 }
 
 // ---------- Settings ----------

@@ -2,7 +2,7 @@
 // Strategy: try the internet first (so updates show up right away),
 // and fall back to the saved copy when offline.
 // Bump CACHE when you want to force-refresh everything.
-const CACHE = 'donovan-v16';
+const CACHE = 'donovan-v17';
 
 const FILES = [
   './',
@@ -23,9 +23,19 @@ const FILES = [
   'src/rock.js',
   'src/bullets.js',
   'src/zombie.js',
+  'src/sound.js',
+  'assets/audio/wave.m4a',
   'assets/kenney/craft_speederA.glb',
   'assets/kenney/meteor_detailed.glb',
   'assets/kenney/meteor.glb',
+  'assets/kenney/cars/suv.glb',
+  'assets/kenney/cars/Textures/colormap.png',
+  'assets/kenney/zombies/zombie-a.glb',
+  'assets/kenney/zombies/zombie-c.glb',
+  'assets/kenney/graveyard/character-zombie.glb',
+  'assets/kenney/graveyard/pine.glb',
+  'assets/kenney/graveyard/pine-crooked.glb',
+  'assets/kenney/graveyard/Textures/colormap.png',
   'icons/icon-180.png',
   'icons/icon-192.png',
   'icons/icon-512.png',
