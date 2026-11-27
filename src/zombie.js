@@ -1,8 +1,7 @@
 // Zombie Jeep: you drive a jeep, seen from above, on a grassy field.
 //
-//   - The jeeps never stop: they always drive. Tap (or hold) the screen and
-//     the closest jeep turns and heads for that spot; once it gets there it
-//     keeps going straight. Bump into the trees and it bounces off.
+//   - Hold your finger on the screen: the closest jeep drives toward your finger.
+//   - Let go: the jeep stops.
 //   - Zombies dig their way out of the ground (a hole opens, then a zombie
 //     climbs out) and chase the closest jeep. Don't let one touch you!
 //   - Waves: every 30 seconds a new wave starts, and each is harder:
@@ -14,7 +13,7 @@
 //     blue = speed, yellow = rapid fire, purple = shield.
 //   - A gun turret on top of each jeep swings round by itself and shoots
 //     the closest zombie (if it's near enough). One shot knocks a zombie out.
-//   - New areas: at wave 5 (and every 5 waves after) the trees on the right
+//   - New areas: at wave 3 (and every 3 waves after) the trees on the right
 //     side part to open a path to a new field next door. The view follows
 //     the jeeps (the middle of both, with two players), and the two jeeps
 //     can't drive further apart than the screen is wide.
@@ -31,7 +30,6 @@ import * as sound from './sound.js';
 const JEEP_TOP_SPEED = 300;    // pixels per second
 const JEEP_TURN = 5;           // how fast it turns (radians per second)
 const JEEP_BRAKE = 1400;       // how quickly it stops when you let go
-const TARGET_REACHED = 40;      // this close to the tapped spot counts as there
 const JEEP_RADIUS = 34;        // for bumping into zombies
 const JOIN_SAFE_MS = 2000;
 const REAR_AXLE = 22;          // back wheels: this far behind the jeep's middle...
@@ -98,7 +96,7 @@ const SHOT_RADIUS = 6;
 
 // Areas: fields side by side. Every NEW_AREA_EVERY waves the trees on the
 // right of the last field part, opening a path to a new field.
-const NEW_AREA_EVERY = 5;
+const NEW_AREA_EVERY = 3;
 const GAP_HALF = 130;          // the path through the trees is twice this tall
 const CAMERA_FOLLOW = 6;        // how quickly the view catches up with the jeeps
 
@@ -197,9 +195,8 @@ export default class ZombieGame {
       x, y,
       heading: 0,          // which way it points (0 = up the screen)
       speed: 0,
-      target: null,        // spot on the field it's heading for (null = straight on)
-      held: null,          // where a finger is holding on the screen (null = none)
-      pointerId: null,     // which finger is steering it
+      finger: null,        // where its driver's finger is on the screen (null = not touching)
+      pointerId: null,     // which finger is driving it
       turretAim: 0,        // which way its gun points on screen
       lastShot: 0,
       out: false,          // caught by a zombie
@@ -260,21 +257,21 @@ export default class ZombieGame {
     return best;
   }
 
-  // ---------- Steering: tap where the jeep should go ----------
+  // ---------- Touch: hold to drive, let go to stop ----------
 
   stopSteering(j) {
     j.pointerId = null;
-    j.held = null;
-    j.target = null;
+    j.finger = null;
   }
 
-  // A finger going down steers the closest jeep (that no other finger is
-  // steering) toward that spot. Hold and slide to keep steering it.
+  // Each new finger takes the closest jeep that nobody is driving yet.
   setUpTouch() {
     const { W, H } = this.world;
     const stage = document.getElementById('stage');
     const toScreen = (e) => {
       const r = stage.getBoundingClientRect();
+      // Where on the SCREEN. The view moves, so each frame the jeep heads for
+      // whatever bit of the field is under the finger right then.
       return { x: (e.clientX - r.left) * W / r.width, y: (e.clientY - r.top) * H / r.height };
     };
     const down = (e) => {
@@ -283,21 +280,16 @@ export default class ZombieGame {
       const free = this.liveJeeps().filter((j) => j.pointerId === null);
       if (!free.length) return;
       free.sort((a, b) => Math.hypot(a.x - q.x, a.y - q.y) - Math.hypot(b.x - q.x, b.y - q.y));
-      const j = free[0];
-      j.pointerId = e.pointerId;
-      j.held = p;
-      j.target = q;
-      this.tapRing(p, j === this.jeeps[0] ? '#7dff9e' : '#ffb347');
+      free[0].pointerId = e.pointerId;
+      free[0].finger = p;
     };
     const move = (e) => {
       const j = this.jeeps.find((jj) => jj.pointerId === e.pointerId);
-      if (j) j.held = toScreen(e);
+      if (j) j.finger = toScreen(e);
     };
     const up = (e) => {
       const j = this.jeeps.find((jj) => jj.pointerId === e.pointerId);
-      if (!j) return;
-      j.pointerId = null;
-      j.held = null; // (it keeps heading for the last spot)
+      if (j) this.stopSteering(j);
     };
     stage.addEventListener('pointerdown', down);
     window.addEventListener('pointermove', move);
@@ -309,14 +301,6 @@ export default class ZombieGame {
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', up);
     };
-  }
-
-  // A little ring that pops where you tapped (in the jeep's colour).
-  tapRing(p, color) {
-    const ring = el('div', 'tap-ring');
-    Object.assign(ring.style, { left: `${p.x}px`, top: `${p.y}px`, borderColor: color });
-    this.ui.append(ring);
-    setTimeout(() => ring.remove(), 500);
   }
 
   // ---------- Every frame ----------
@@ -466,28 +450,30 @@ export default class ZombieGame {
 
   driveJeep(j, s, now) {
     const { W, H } = this.world;
-    // A held finger keeps moving the target (the view moves too).
-    if (j.held) j.target = { x: j.held.x + this.world.cameraX, y: j.held.y };
-    if (j.target) {
-      const dx = j.target.x - j.x;
-      const dy = j.target.y - j.y;
-      if (!j.held && Math.hypot(dx, dy) < TARGET_REACHED) {
-        j.target = null; // got there: carry on straight
-      } else if (Math.hypot(dx, dy) > 8) {
-        // Turn toward the spot (heading 0 = up the screen, turning clockwise).
+    if (j.finger) {
+      const dx = j.finger.x + this.world.cameraX - j.x; // (finger is on the screen; the view moves)
+      const dy = j.finger.y - j.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 6) {
+        // Turn toward the finger (heading 0 = up the screen, turning clockwise).
         const want = Math.atan2(dx, -dy);
         let diff = want - j.heading;
         diff = Math.atan2(Math.sin(diff), Math.cos(diff)); // shortest way round
         j.heading += Math.max(-JEEP_TURN * s, Math.min(JEEP_TURN * s, diff));
+        // Speed up, but slow down when nearly at the finger.
+        const top = JEEP_TOP_SPEED * (this.hasBoost(j, 'speed', now) ? SPEED_BOOST : 1);
+        const wantSpeed = Math.min(top, dist * 4);
+        j.speed += Math.max(-JEEP_BRAKE * s, Math.min(900 * s, wantSpeed - j.speed));
+      } else {
+        j.speed = Math.max(0, j.speed - JEEP_BRAKE * s);
       }
+    } else {
+      // Finger lifted: stop.
+      j.speed = Math.max(0, j.speed - JEEP_BRAKE * s);
     }
-    // Always driving, at full speed.
-    const top = JEEP_TOP_SPEED * (this.hasBoost(j, 'speed', now) ? SPEED_BOOST : 1);
-    j.speed += Math.max(-JEEP_BRAKE * s, Math.min(900 * s, top - j.speed));
 
     j.x += Math.sin(j.heading) * j.speed * s;
     j.y -= Math.cos(j.heading) * j.speed * s;
-    const [wasX, wasY] = [j.x, j.y];
     this.keepInFields(j, JEEP_RADIUS);
     // Both jeeps have to fit on the screen: a jeep can't get further from
     // the other one than the screen is wide (it's held back at the edge).
@@ -495,16 +481,6 @@ export default class ZombieGame {
     if (other) {
       const reach = W - 2 * JEEP_RADIUS - 20;
       j.x = Math.max(other.x - reach, Math.min(other.x + reach, j.x));
-    }
-    // Hit the trees (or the edge of the screen): bounce off. A tapped spot
-    // out in the trees is dropped, or it would steer straight back in.
-    const hitSide = j.x !== wasX;
-    const hitEnd = j.y !== wasY;
-    if (hitSide || hitEnd) {
-      const fx = Math.sin(j.heading) * (hitSide ? -1 : 1);
-      const fy = -Math.cos(j.heading) * (hitEnd ? -1 : 1);
-      j.heading = Math.atan2(fx, -fy);
-      if (!j.held) j.target = null;
     }
 
     j.model.position.copyFrom(this.world.at(j.x, j.y, 0));
