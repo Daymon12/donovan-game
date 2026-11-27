@@ -21,7 +21,8 @@ import { glowMaterial } from './world.js';
 // (0.25 = each player gets a quarter, the middle gets half).
 const STRIP_SHARE = 0.25;
 const ROCK_COUNT = 5;
-const HITS_TO_BREAK = 20;      // shots (any power) that break a big rock into 4 pieces
+const HITS_TO_BREAK = 10;      // shots (any power) that break a big rock into 4 pieces
+const PIECE_SPREAD = 90;       // how fast the 4 pieces fly apart (sideways) when a rock breaks
 const BLUE = '#2ec4ff';
 const ORANGE = '#ff7a45';
 
@@ -252,7 +253,7 @@ export default class Game {
   shatter(rock) {
     for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
       const piece = new Rock(this, rock.x + dx * 22, rock.y + dy * 22, {
-        piece: true, vx: rock.vx + dx * 45, vy: rock.vy,
+        piece: true, vx: rock.vx + dx * PIECE_SPREAD, vy: rock.vy,
       });
       piece.zapUntil = rock.zapUntil; // keep any zap / heat it already had
       piece.hotUntil = rock.hotUntil;

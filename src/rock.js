@@ -12,8 +12,9 @@ import { paint, setGlow, hex } from './world.js';
 const RADIUS = 42;            // hit circle of a big rock (small pieces are half)
 const START_DRIFT = 25;       // slow sideways drift at the start (pixels/second)
 const PUSH = 22;              // speed added by each bullet hit ("heavy" = small number)
-const PIECE_PUSH = 2.5;       // small pieces get pushed this many times harder
-const MAX_SPEED = 380;        // speed limit
+const PIECE_PUSH = 4;         // small pieces get pushed this many times harder
+const MAX_SPEED = 380;        // speed limit for big rocks
+const PIECE_MAX_SPEED = 600;  // small pieces can go faster
 const ZAP_MS = 3000;          // how long electric slows it
 const ZAP_KEEP = 0.3;         // while zapped, keeps only 30% of its speed each second
 export const HOT_MS = 6000;   // how long lava keeps it hot
@@ -43,7 +44,7 @@ export default class Rock {
     }
 
     this.scored = false;
-    this.hits = 0;          // bullets that hit it (20 breaks a big rock - see game.js)
+    this.hits = 0;          // bullets that hit it (10 breaks a big rock - see game.js)
     this.zapUntil = 0;
     this.hotUntil = 0;
     this.look = '';
@@ -80,9 +81,10 @@ export default class Rock {
     }
     // Speed limit.
     const speed = Math.hypot(this.vx, this.vy);
-    if (speed > MAX_SPEED) {
-      this.vx *= MAX_SPEED / speed;
-      this.vy *= MAX_SPEED / speed;
+    const limit = this.piece ? PIECE_MAX_SPEED : MAX_SPEED;
+    if (speed > limit) {
+      this.vx *= limit / speed;
+      this.vy *= limit / speed;
     }
     this.x += this.vx * dt / 1000;
     this.y += this.vy * dt / 1000;
