@@ -2,7 +2,7 @@
 // Strategy: try the internet first (so updates show up right away),
 // and fall back to the saved copy when offline.
 // Bump CACHE when you want to force-refresh everything.
-const CACHE = 'donovan-v21';
+const CACHE = 'donovan-v22';
 
 const FILES = [
   './',
@@ -25,6 +25,7 @@ const FILES = [
   'src/zombie.js',
   'src/sound.js',
   'assets/audio/wave.m4a',
+  'assets/audio/music.mp3',
   'assets/kenney/craft_speederA.glb',
   'assets/kenney/meteor_detailed.glb',
   'assets/kenney/meteor.glb',

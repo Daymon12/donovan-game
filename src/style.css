@@ -133,9 +133,28 @@ html, body {
   transform: translate(-50%, -50%);
   animation: path-nudge 0.9s ease-in-out infinite alternate;
 }
-.path-arrow.left { --nudge: -18px; }
-.path-arrow.right { --nudge: 18px; }
+.path-arrow.left { --nx: -18px; }
+.path-arrow.right { --nx: 18px; }
+.path-arrow.up { --ny: -18px; }
+.path-arrow.down { --ny: 18px; }
 @keyframes path-nudge {
   from { transform: translate(-50%, -50%); opacity: 0.55; }
-  to { transform: translate(calc(-50% + var(--nudge)), -50%); opacity: 1; }
+  to { transform: translate(calc(-50% + var(--nx, 0px)), calc(-50% + var(--ny, 0px))); opacity: 1; }
 }
+
+/* Zombie Jeep: points, and the weapon box's label */
+.points {
+  left: 145px; top: 16px;
+  font-size: 40px; font-weight: bold; color: #ffd84d; white-space: nowrap;
+  -webkit-text-stroke: 2px #3a2a00; paint-order: stroke fill;
+  text-shadow: 0 3px 0 rgba(0, 0, 0, 0.45);
+}
+.box-label {
+  transform: translate(-50%, -50%);
+  padding: 6px 14px; border-radius: 18px; white-space: nowrap;
+  background: rgba(40, 24, 8, 0.75); border: 3px solid #ffcc33;
+  font-size: 28px; font-weight: bold; color: #fff;
+  animation: box-bob 0.8s ease-in-out infinite alternate;
+}
+.box-label.far { background: rgba(255, 180, 40, 0.9); color: #3a2a00; }
+@keyframes box-bob { to { transform: translate(-50%, calc(-50% - 8px)); } }

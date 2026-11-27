@@ -12,11 +12,16 @@
 //   - Potion bottles pop up now and then. Drive over one for a power-up:
 //     blue = speed, yellow = rapid fire, purple = shield.
 //   - A gun turret on top of each jeep swings round by itself and shoots
-//     the closest zombie (if it's near enough). One shot knocks a zombie out.
-//   - New areas: at wave 3 (and every 3 waves after) the trees on the right
-//     side part to open a path to a new field next door. The view follows
+//     the closest zombie (if it's near enough).
+//   - Points: every zombie knocked out earns points (shown top left).
+//   - From wave 5 a weapon box sits somewhere on the map (a label points to
+//     it). Drive over it with enough points to buy a new weapon for that
+//     jeep: machine gun, shotgun, rockets or laser. Then the box moves.
+//   - The map: three fields. A (bottom left, where you start), B (bottom
+//     right) and C (wide, along the top). Paths through the trees open at
+//     wave 2 (A to B), wave 5 (B to C) and wave 7 (A to C). The view follows
 //     the jeeps (the middle of both, with two players), and the two jeeps
-//     can't drive further apart than the screen is wide.
+//     can't get further apart than the screen.
 //   - A second player can tap "+ Jeep 2" to join with an orange jeep.
 //     If a zombie gets one jeep, the other keeps going, and a red rescue
 //     potion pops up: grab it (or beat the boss) and the caught jeep comes
@@ -82,7 +87,7 @@ const RESCUE = { color: '#ff4d6d', label: 'Rescue!' };
 const RESCUE_AFTER_MS = 4000;   // pops up this long after a jeep is caught (or after the last one vanished)
 const RESCUE_LASTS_MS = 15000;
 const SPEED_BOOST = 1.6;        // top speed x1.6 with the speed potion
-const RAPID_FIRE_MS = 200;      // time between shots with the rapid-fire potion
+const RAPID_FACTOR = 0.35;      // rapid-fire potion: time between shots x0.35
 const HOLE_MS = 900;           // a hole takes this long to open...
 const CLIMB_MS = 900;          // ...then the zombie takes this long to climb out
 const HOLE_STAYS_MS = 1500;    // the empty hole stays this long before filling in...
@@ -90,15 +95,47 @@ const HOLE_FADE_MS = 10000;    // ...then its ring of dug-up dirt fades away ove
 const HOLE_MIN_DISTANCE = 230; // holes never open closer than this to a jeep
 const TURRET_RANGE = 380;      // the gun only shoots zombies this close (pixels)
 const TURRET_TURN = 7;         // how fast the gun swings round (radians per second)
-const TURRET_FIRE_MS = 650;    // time between shots
-const SHOT_SPEED = 700;        // bullet speed (pixels per second)
-const SHOT_RADIUS = 6;
 
-// Areas: fields side by side. Every NEW_AREA_EVERY waves the trees on the
-// right of the last field part, opening a path to a new field.
-const NEW_AREA_EVERY = 3;
-const GAP_HALF = 130;          // the path through the trees is twice this tall
-const CAMERA_FOLLOW = 6;        // how quickly the view catches up with the jeeps
+// Weapons. Every jeep starts with the gun; the weapon box sells the others.
+//   ms = time between shots, shots = bullets per shot (spread out over `spread`
+//   radians), damage = hits taken off a zombie, life = how long a bullet flies
+//   (ms, else until off screen), blast = rockets hurt everything this close,
+//   pierce = laser bolts go through zombies.
+const WEAPONS = {
+  gun:     { name: 'Gun',          ms: 650,  shots: 1, spread: 0,    damage: 1, speed: 700,  size: 6,  color: '#ffd84d' },
+  machine: { name: 'Machine gun!', ms: 150,  shots: 1, spread: 0.12, damage: 1, speed: 900,  size: 5,  color: '#fff17a' },
+  shotgun: { name: 'Shotgun!',     ms: 800,  shots: 6, spread: 0.6,  damage: 1, speed: 750,  size: 5,  color: '#ffb347', life: 500 },
+  rocket:  { name: 'Rockets!',     ms: 1100, shots: 1, spread: 0,    damage: 4, speed: 520,  size: 11, color: '#ff6a3d', blast: 120 },
+  laser:   { name: 'Laser!',       ms: 380,  shots: 1, spread: 0,    damage: 2, speed: 1400, size: 5,  color: '#5ef0ff', pierce: true },
+};
+
+// Points for knocking zombies out, and the weapon box.
+const POINTS = { slow: 10, fast: 15, boss: 100 };
+const BOX_WAVE = 5;            // the box first shows up at this wave
+const BOX_PRICE = 300;         // points for one go
+const BOX_MOVE_MS = 1500;      // after a buy it vanishes, then pops up somewhere else
+
+// The map, in screens: A bottom left (start), B bottom right, C wide along the top.
+const FIELDS = [
+  { x: 0, y: 0, w: 1, h: 1 },  // A
+  { x: 1, y: 0, w: 1, h: 1 },  // B
+  { x: 0, y: -1, w: 2, h: 1 }, // C
+];
+// Paths through the trees: on field a's `side`, `at` this far along it (0 to 1), into field b.
+const OPENINGS = [
+  { wave: 2, a: 0, b: 1, side: 'right', at: 0.5 },  // 1: A to B
+  { wave: 5, a: 1, b: 2, side: 'top', at: 0.57 },   // 2: B to C
+  { wave: 7, a: 0, b: 2, side: 'top', at: 0.48 },   // 3: A to C
+];
+const GAP_HALF = 130;          // a path is twice this wide
+const PATH_DEPTH = 170;        // and reaches this far either side of the tree line
+const CAMERA_FOLLOW = 6;       // how quickly the view catches up with the jeeps
+
+// Background music: loops all game, but goes quiet while the wave track
+// plays (so you can hear it), then comes back up.
+const MUSIC_FILE = 'assets/audio/music.mp3';
+const MUSIC_VOLUME = 0.45;
+const MUSIC_QUIET = 0.08;
 
 export default class ZombieGame {
   constructor(world, ui, { onBack, onRestart }) {
@@ -116,9 +153,13 @@ export default class ZombieGame {
     this.sun.intensity = 0.75;
     this.sky.intensity = 0.55;
 
-    this.areas = [];     // fields side by side; field k starts k screens to the right
+    this.areas = [];     // fields built so far
+    this.fields = [];    // ...by number (0 = A, 1 = B, 2 = C)
+    this.paths = [];     // open paths between fields
     this.arrows = [];
     this.buildArea(0);
+    this.box = null;     // the weapon box (from wave 5)
+    this.points = 0;
 
     // Jeep 1 starts in the middle, pointing up. Jeep 2 joins with the button.
     this.jeeps = [this.makeJeep(W / 2, H / 2, 'green')];
@@ -139,6 +180,9 @@ export default class ZombieGame {
     this.clock = el('div', 'zombie-clock');
     this.clock.style.left = `${W / 2}px`;
     ui.append(this.clock);
+    this.pointsEl = el('div', 'points');
+    ui.append(this.pointsEl);
+    this.drawPoints();
     this.showWaveBanner();
 
     // The wave track plays now, at the start, and again after each boss
@@ -147,6 +191,8 @@ export default class ZombieGame {
     this.phase = 'fight';
     this.music = sound.play('wave');
     this.quietUntil = this.started + sound.duration('wave') * 1000;
+    this.song = sound.music(MUSIC_FILE, MUSIC_QUIET); // starts quiet: the wave track is playing
+    this.songQuiet = true;
 
     // Boss health bar (hidden until a boss comes out).
     this.bossBar = el('div', 'boss-bar');
@@ -169,13 +215,14 @@ export default class ZombieGame {
     this.stopFrames();
     this.stopTouch();
     this.music.stop();
+    this.song.stop();
     clearTimeout(this.timer);
     [this.sun.intensity, this.sky.intensity] = this.oldLight;
     this.root.dispose(false, false);
     for (const m of Object.values(this.mats)) m.dispose();
     for (const a of this.areas) {
-      a.grassMat.opacityTexture.dispose();
-      a.grassMat.dispose();
+      a.dirtMat.dispose(false, true);
+      a.grassMat.dispose(false, true);
       a.shadeMat.dispose(false, true);
       a.tracks.material.dispose(true, true);
     }
@@ -184,7 +231,9 @@ export default class ZombieGame {
     for (const m of this.treeMats) m.dispose();
     this.world.originX = 0;
     this.world.cameraX = 0;
+    this.world.cameraY = 0;
     this.world.camera.position.x = 0;
+    this.world.camera.position.z = 0;
     this.ui.innerHTML = '';
   }
 
@@ -199,6 +248,7 @@ export default class ZombieGame {
       pointerId: null,     // which finger is driving it
       turretAim: 0,        // which way its gun points on screen
       lastShot: 0,
+      weapon: 'gun',       // see WEAPONS
       out: false,          // caught by a zombie
       safeUntil: 0,
       boost: { speed: 0, rapid: 0, shield: 0 }, // when each power-up runs out
@@ -225,15 +275,18 @@ export default class ZombieGame {
   // The spot on the screen furthest from any zombie (for a jeep to appear).
   safeSpot() {
     const { W, H } = this.world;
-    const c = this.world.cameraX;
-    const spots = [[c + W / 2, H * 0.8], [c + W / 2, H * 0.2], [c + W * 0.25, H / 2], [c + W * 0.75, H / 2]];
+    const cx = this.world.cameraX;
+    const cy = this.world.cameraY;
+    const spots = [[W / 2, H * 0.8], [W / 2, H * 0.2], [W * 0.25, H / 2], [W * 0.75, H / 2]]
+      .map(([x, y]) => [cx + x, cy + y])
+      .filter(([x, y]) => this.walkable(x, y, JEEP_RADIUS + 10)); // (not in the trees)
     // (Not on top of a jeep that's already there.)
     const free = spots.filter(([x, y]) => this.liveJeeps().every((j) => Math.hypot(j.x - x, j.y - y) > 200));
-    const safest = (free.length ? free : spots).reduce((best, spot) =>
+    const choices = free.length ? free : spots;
+    if (!choices.length) return this.spotInView(JEEP_RADIUS + 20);
+    const safest = choices.reduce((best, spot) =>
       (this.closestZombieDistance(spot) > this.closestZombieDistance(best) ? spot : best));
-    const spot = { x: safest[0], y: safest[1] };
-    this.keepInFields(spot, JEEP_RADIUS); // (not in the trees between two fields)
-    return spot;
+    return { x: safest[0], y: safest[1] };
   }
 
   closestZombieDistance([x, y]) {
@@ -276,7 +329,7 @@ export default class ZombieGame {
     };
     const down = (e) => {
       const p = toScreen(e);
-      const q = { x: p.x + this.world.cameraX, y: p.y }; // that spot on the field
+      const q = { x: p.x + this.world.cameraX, y: p.y + this.world.cameraY }; // that spot on the field
       const free = this.liveJeeps().filter((j) => j.pointerId === null);
       if (!free.length) return;
       free.sort((a, b) => Math.hypot(a.x - q.x, a.y - q.y) - Math.hypot(b.x - q.x, b.y - q.y));
@@ -309,6 +362,12 @@ export default class ZombieGame {
     if (this.over) return;
     const s = dt / 1000;
     for (const a of this.areas) a.tracks.update(now);
+    // Music down while the wave track plays, back up after.
+    const quiet = now < this.quietUntil;
+    if (quiet !== this.songQuiet) {
+      this.songQuiet = quiet;
+      this.song.volume(quiet ? MUSIC_QUIET : MUSIC_VOLUME, quiet ? 0.4 : 1.5);
+    }
     // How a wave goes:
     //   'fight' - 30 seconds of zombies.
     //   'boss'  - time's up: a big boss zombie digs out. Zombies keep coming.
@@ -324,7 +383,8 @@ export default class ZombieGame {
       this.wave += 1;
       this.waveStarted = now;
       this.showWaveBanner();
-      if (this.wave % NEW_AREA_EVERY === 0) this.openNewArea(now);
+      this.openPaths();
+      if (this.wave === BOX_WAVE) this.placeBox(now);
     }
 
     for (const j of this.liveJeeps()) {
@@ -337,6 +397,7 @@ export default class ZombieGame {
     this.followCamera(s);
     this.moveShots(s, now);
     this.updatePotions(now);
+    this.updateBox(now);
 
     // New zombies (quicker each wave), but none while the wave track plays.
     if (now >= this.nextZombieAt && now >= this.quietUntil) {
@@ -362,9 +423,8 @@ export default class ZombieGame {
         z.flashUntil = 0;
         setVisibility(z.model, 1);
       }
-      z.x += Math.sin(z.heading) * z.speed * s;
-      z.y -= Math.cos(z.heading) * z.speed * s;
-      this.keepInFields(z, z.r); // zombies come through the paths too, not the trees
+      // (Zombies come through the paths too, not through the trees.)
+      this.moveBy(z, z.r, Math.sin(z.heading) * z.speed * s, -Math.cos(z.heading) * z.speed * s);
     }
     this.spreadZombies();
     for (const z of this.zombies) {
@@ -439,10 +499,10 @@ export default class ZombieGame {
   }
 
   // A little word that floats up from (x, y), e.g. "Speed!".
-  popText(x, y, text, color) {
+  popText(x, y, text, color, size = 40) {
     const t = el('div', 'plus');
     t.textContent = text;
-    Object.assign(t.style, { left: `${x - this.world.cameraX}px`, top: `${y}px`, color, fontSize: '40px' });
+    Object.assign(t.style, { left: `${x - this.world.cameraX}px`, top: `${y - this.world.cameraY}px`, color, fontSize: `${size}px` });
     t.style.setProperty('--rise', '-70px');
     this.ui.append(t);
     setTimeout(() => t.remove(), 900);
@@ -452,7 +512,7 @@ export default class ZombieGame {
     const { W, H } = this.world;
     if (j.finger) {
       const dx = j.finger.x + this.world.cameraX - j.x; // (finger is on the screen; the view moves)
-      const dy = j.finger.y - j.y;
+      const dy = j.finger.y + this.world.cameraY - j.y;
       const dist = Math.hypot(dx, dy);
       if (dist > 6) {
         // Turn toward the finger (heading 0 = up the screen, turning clockwise).
@@ -472,16 +532,14 @@ export default class ZombieGame {
       j.speed = Math.max(0, j.speed - JEEP_BRAKE * s);
     }
 
-    j.x += Math.sin(j.heading) * j.speed * s;
-    j.y -= Math.cos(j.heading) * j.speed * s;
-    this.keepInFields(j, JEEP_RADIUS);
-    // Both jeeps have to fit on the screen: a jeep can't get further from
-    // the other one than the screen is wide (it's held back at the edge).
+    // Stay out of the trees, and both jeeps have to fit on the screen:
+    // a jeep can't get further from the other one than that (it's held back).
     const other = this.liveJeeps().find((o) => o !== j);
-    if (other) {
-      const reach = W - 2 * JEEP_RADIUS - 20;
-      j.x = Math.max(other.x - reach, Math.min(other.x + reach, j.x));
-    }
+    const reachX = W - 2 * JEEP_RADIUS - 20;
+    const reachY = H - 2 * JEEP_RADIUS - 20;
+    this.moveBy(j, JEEP_RADIUS, Math.sin(j.heading) * j.speed * s, -Math.cos(j.heading) * j.speed * s,
+      (x, y) => this.walkable(x, y, JEEP_RADIUS)
+        && (!other || (Math.abs(x - other.x) <= reachX && Math.abs(y - other.y) <= reachY)));
 
     j.model.position.copyFrom(this.world.at(j.x, j.y, 0));
     j.model.rotation.y = j.heading;
@@ -510,49 +568,52 @@ export default class ZombieGame {
     j.lastWheels = wheels;
   }
 
-  // ---------- Areas ----------
+  // ---------- The map: fields and the paths between them ----------
 
-  // A field: dirt, grass round the edge and trees all round, sitting at
-  // its own spot in the 3D world (field k is k screens to the right).
-  // Every field after the first starts with an open path on its left.
-  buildArea(k) {
+  // Field i (see FIELDS): dirt, grass round the edge and trees all round,
+  // at its own spot in the 3D world.
+  buildArea(i) {
     const { W, H, scene } = this.world;
-    const node = new BABYLON.TransformNode('area' + k, scene);
-    node.parent = this.root;
-    node.position.x = k * W;
-    const area = { k, node, gaps: { left: k > 0, right: false }, trees: [] };
-    makeGround(this, area, W, H);
-    makeEdgeShade(this, area, W, H);
-    area.tracks = makeTracks(this, area, W, H);
-    makeBorderTrees(this, area, W, H);
+    const f = FIELDS[i];
+    const area = { i, x: f.x * W, y: f.y * H, w: f.w * W, h: f.h * H, gaps: [], trees: [], tufts: [] };
+    area.node = new BABYLON.TransformNode('area' + i, scene);
+    area.node.parent = this.root;
+    area.node.position.set(area.x + area.w / 2 - W / 2, 0, H / 2 - (area.y + area.h / 2));
+    makeGround(this, area);
+    makeEdgeShade(this, area);
+    area.tracks = makeTracks(this, area);
+    makeBorderTrees(this, area);
+    this.fields[i] = area;
     this.areas.push(area);
     return area;
   }
 
-  // Wave 5, 10, ...: a new field appears to the right of the last one,
-  // and the trees on that side part to open a path to it.
-  openNewArea(now) {
-    const last = this.areas[this.areas.length - 1];
-    this.buildArea(last.k + 1);
-    last.gaps.right = true;
-    redrawGrass(this, last);
-    // The trees in the way shrink away in a puff of leaves, one after another.
-    const { W, H } = this.world;
-    const inWay = last.trees.filter((t) => t.x > W - 150 && Math.abs(t.y - H / 2) < GAP_HALF + 30);
-    inWay.sort((a, b) => b.x - a.x);
-    inWay.forEach((t, i) => {
-      last.trees.splice(last.trees.indexOf(t), 1);
-      const size = t.node.scaling.x;
-      setTimeout(() => {
-        if (this.destroyed) return;
-        this.world.burst(last.k * W + t.x, t.y, { count: 8, color: pick(TREE_GREENS), size: [8, 16], dist: [30, 80], ms: 500, h: 40 });
-        this.world.animate(500, (p) => t.node.scaling.setAll(size * (1 - p)), () => t.node.dispose());
-      }, 200 + i * 120);
-    });
+  // Waves 2, 5 and 7: a path opens (and the field on the other side is
+  // built, if it isn't yet).
+  openPaths() {
+    for (const o of OPENINGS) if (o.wave === this.wave) this.openPath(o);
+  }
+
+  openPath(o) {
+    if (!this.fields[o.b]) this.buildArea(o.b);
+    const a = this.fields[o.a];
+    const b = this.fields[o.b];
+    const vertical = o.side === 'left' || o.side === 'right'; // the tree line runs up and down
+    const along = vertical ? a.y + o.at * a.h : a.x + o.at * a.w;
+    const wall = { left: a.x, right: a.x + a.w, top: a.y, bottom: a.y + a.h }[o.side];
+    const toward = o.side === 'right' || o.side === 'bottom' ? 1 : -1; // from a into b
+    this.paths.push({ vertical, along, wall, toward });
+    const opposite = { left: 'right', right: 'left', top: 'bottom', bottom: 'top' }[o.side];
+    for (const [area, side] of [[a, o.side], [b, opposite]]) {
+      const gap = { side, at: along - (vertical ? area.y : area.x) };
+      area.gaps.push(gap);
+      redrawGrass(this, area);
+      this.clearPath(area, gap);
+    }
     setTimeout(() => {
       if (this.destroyed) return;
       const msg = el('div', 'wave-banner');
-      msg.textContent = 'New path! ➜';
+      msg.textContent = 'New path!';
       msg.style.left = `${this.world.W / 2}px`;
       msg.style.top = `${this.world.H / 2 + 120}px`;
       msg.style.fontSize = '72px';
@@ -562,82 +623,188 @@ export default class ZombieGame {
     this.makeArrows();
   }
 
-  // Keep something (a jeep or zombie, r = its size) out of the trees: inside
-  // its field, or in an open path between two fields.
-  keepInFields(p, r) {
-    const { W, H } = this.world;
-    const k = Math.max(0, Math.min(this.areas.length - 1, Math.floor(p.x / W)));
-    const area = this.areas[k];
-    const left = k * W;
-    const pathHalf = GAP_HALF - r;
-    const inPath = Math.abs(p.y - H / 2) <= pathHalf;
-    const minX = area.gaps.left && inPath ? left - W : left + r;
-    const maxX = area.gaps.right && inPath ? left + 2 * W : left + W - r;
-    p.x = Math.max(minX, Math.min(maxX, p.x));
-    const across = p.x - left;
-    if (across < r || across > W - r) {
-      p.y = Math.max(H / 2 - pathHalf, Math.min(H / 2 + pathHalf, p.y)); // going through a path
-    } else {
-      p.y = Math.max(r, Math.min(H - r, p.y));
-    }
+  // The trees in the way shrink away in a puff of leaves, one after another.
+  clearPath(area, gap) {
+    const inWay = area.trees.filter((t) => inGap(area, gap, t.x, t.y, 30));
+    inWay.forEach((t, i) => {
+      area.trees.splice(area.trees.indexOf(t), 1);
+      const size = t.node.scaling.x;
+      setTimeout(() => {
+        if (this.destroyed) return;
+        this.world.burst(area.x + t.x, area.y + t.y, { count: 8, color: pick(TREE_GREENS), size: [8, 16], dist: [30, 80], ms: 500, h: 40 });
+        this.world.animate(500, (p) => t.node.scaling.setAll(size * (1 - p)), () => t.node.dispose());
+      }, 200 + i * 120);
+    });
+    for (const t of area.tufts.filter((tt) => inGap(area, gap, tt.x, tt.y, 0))) t.mesh.dispose();
+    area.tufts = area.tufts.filter((tt) => !inGap(area, gap, tt.x, tt.y, 0));
   }
 
-  // A random spot across the screen that's inside a field (not in the
-  // trees between two fields), at least `margin` from a field's edge.
-  spotOnScreen(margin) {
-    const { W } = this.world;
-    const cam = this.world.cameraX;
-    for (let tries = 0; tries < 20; tries++) {
-      const x = cam + between(margin, W - margin);
-      const across = x - Math.floor(x / W) * W;
-      if (across > margin && across < W - margin) return x;
+  // Can something this size (r) be here? Inside a field, or in an open path.
+  walkable(x, y, r) {
+    for (const a of this.areas) {
+      if (x >= a.x + r && x <= a.x + a.w - r && y >= a.y + r && y <= a.y + a.h - r) return true;
     }
-    const k = Math.min(this.areas.length - 1, Math.round(cam / W));
-    return k * W + W / 2;
+    const half = GAP_HALF - r;
+    for (const p of this.paths) {
+      const [across, along] = p.vertical ? [x, y] : [y, x];
+      if (Math.abs(across - p.wall) <= PATH_DEPTH && Math.abs(along - p.along) <= half) return true;
+    }
+    return false;
+  }
+
+  // Move something (a jeep or zombie, r = its size) by (dx, dy), but not
+  // into the trees: it slides along them instead.
+  moveBy(p, r, dx, dy, ok = (x, y) => this.walkable(x, y, r)) {
+    if (!ok(p.x, p.y)) { // somewhere odd already: let it move, so it can get out
+      p.x += dx;
+      p.y += dy;
+      return;
+    }
+    if (ok(p.x + dx, p.y)) p.x += dx;
+    if (ok(p.x, p.y + dy)) p.y += dy;
+  }
+
+  // A random spot on the screen, inside a field (at least `margin` from the trees).
+  spotInView(margin) {
+    const { W, H } = this.world;
+    const cx = this.world.cameraX;
+    const cy = this.world.cameraY;
+    for (let tries = 0; tries < 40; tries++) {
+      const x = cx + between(margin, W - margin);
+      const y = cy + between(margin + 60, H - margin);
+      if (this.walkable(x, y, margin)) return { x, y };
+    }
+    const j = this.liveJeeps()[0];
+    const a = (j && this.areas.find((f) => j.x >= f.x && j.x <= f.x + f.w && j.y >= f.y && j.y <= f.y + f.h)) || this.areas[0];
+    return { x: a.x + a.w / 2, y: a.y + a.h / 2 };
   }
 
   // The view follows the jeeps (the middle of them, with two), but never
-  // past the end fields, and never leaving a jeep off the screen.
+  // past the edge of the map, and never leaving a jeep off the screen.
   followCamera(s) {
-    const { W } = this.world;
+    const { W, H } = this.world;
     const live = this.liveJeeps();
     if (!live.length) return;
-    const last = this.areas.length * W - W;
-    const middle = live.reduce((sum, j) => sum + j.x, 0) / live.length;
-    const want = Math.max(0, Math.min(last, middle - W / 2));
-    let cam = this.world.cameraX + (want - this.world.cameraX) * Math.min(1, s * CAMERA_FOLLOW);
-    for (const j of live) cam = Math.max(j.x + JEEP_RADIUS - W, Math.min(j.x - JEEP_RADIUS, cam));
-    cam = Math.max(0, Math.min(last, cam));
-    this.world.cameraX = cam;
-    this.world.camera.position.x = cam;
+    const minX = Math.min(...this.areas.map((a) => a.x));
+    const maxX = Math.max(...this.areas.map((a) => a.x + a.w)) - W;
+    const minY = Math.min(...this.areas.map((a) => a.y));
+    const maxY = Math.max(...this.areas.map((a) => a.y + a.h)) - H;
+    const midX = live.reduce((sum, j) => sum + j.x, 0) / live.length;
+    const midY = live.reduce((sum, j) => sum + j.y, 0) / live.length;
+    const k = Math.min(1, s * CAMERA_FOLLOW);
+    let cx = this.world.cameraX + (Math.max(minX, Math.min(maxX, midX - W / 2)) - this.world.cameraX) * k;
+    let cy = this.world.cameraY + (Math.max(minY, Math.min(maxY, midY - H / 2)) - this.world.cameraY) * k;
+    for (const j of live) {
+      cx = Math.max(j.x + JEEP_RADIUS - W, Math.min(j.x - JEEP_RADIUS, cx));
+      cy = Math.max(j.y + JEEP_RADIUS - H, Math.min(j.y - JEEP_RADIUS, cy));
+    }
+    cx = Math.max(minX, Math.min(maxX, cx));
+    cy = Math.max(minY, Math.min(maxY, cy));
+    this.world.cameraX = cx;
+    this.world.cameraY = cy;
+    this.world.camera.position.x = cx;
+    this.world.camera.position.z = -cy;
     for (const a of this.arrows) {
-      const x = a.x - cam;
+      const x = a.x - cx;
+      const y = a.y - cy;
       a.el.style.left = `${x}px`;
-      a.el.style.display = x < -80 || x > W + 80 ? 'none' : '';
+      a.el.style.top = `${y}px`;
+      a.el.style.display = x < -20 || x > W + 20 || y < 60 || y > H + 20 ? 'none' : '';
     }
   }
 
   // Tyre marks go on the field they're in.
   markTracks(x1, y1, x2, y2) {
-    const { W } = this.world;
-    const k = Math.max(0, Math.min(this.areas.length - 1, Math.floor((x1 + x2) / 2 / W)));
-    this.areas[k].tracks.mark(x1 - k * W, y1, x2 - k * W, y2);
+    const mx = (x1 + x2) / 2;
+    const my = (y1 + y2) / 2;
+    const a = this.areas.find((f) => mx >= f.x && mx <= f.x + f.w && my >= f.y && my <= f.y + f.h);
+    if (a) a.tracks.mark(x1 - a.x, y1 - a.y, x2 - a.x, y2 - a.y);
   }
 
-  // Bouncing arrows at every open path (moved with the view each frame).
+  // Bouncing arrows on both sides of every open path, pointing through it
+  // (moved with the view each frame).
   makeArrows() {
     for (const a of this.arrows) a.el.remove();
     this.arrows = [];
-    const { W, H } = this.world;
-    for (const area of this.areas) {
-      for (const side of ['left', 'right']) {
-        if (!area.gaps[side]) continue;
-        const arrow = el('div', 'path-arrow ' + side);
-        arrow.textContent = side === 'right' ? '➜' : '⬅';
-        arrow.style.top = `${H / 2}px`;
+    for (const p of this.paths) {
+      for (const dir of [p.toward, -p.toward]) {
+        // On the near side, pointing across (further in above/below, clear of the wave counter).
+        const spot = p.wall - dir * (p.vertical ? 60 : 130);
+        const [x, y] = p.vertical ? [spot, p.along] : [p.along, spot];
+        const name = p.vertical ? (dir > 0 ? 'right' : 'left') : (dir > 0 ? 'down' : 'up');
+        const arrow = el('div', 'path-arrow ' + name);
+        arrow.textContent = { right: '➜', left: '⬅', up: '⬆', down: '⬇' }[name];
         this.ui.append(arrow);
-        this.arrows.push({ el: arrow, x: area.k * W + (side === 'right' ? W - 55 : 55) });
+        this.arrows.push({ el: arrow, x, y });
       }
+    }
+  }
+
+  // ---------- Points and the weapon box ----------
+
+  drawPoints() {
+    this.pointsEl.textContent = `⭐ ${this.points}`;
+  }
+
+  // The weapon box pops up somewhere on the map (not right by a jeep).
+  placeBox(now) {
+    let x;
+    let y;
+    for (let tries = 0; tries < 30; tries++) {
+      const a = pick(this.areas);
+      x = a.x + between(160, a.w - 160);
+      y = a.y + between(160, a.h - 160);
+      if (this.liveJeeps().every((j) => Math.hypot(j.x - x, j.y - y) > 300)) break;
+    }
+    if (!this.box) {
+      const label = el('div', 'box-label');
+      label.textContent = `🎁 ${BOX_PRICE} ⭐`;
+      this.ui.append(label);
+      this.box = { model: makeBox(this), label, nagUntil: 0 };
+    }
+    Object.assign(this.box, { x, y, hiddenUntil: 0, moving: false });
+    this.box.model.setEnabled(true);
+    this.world.burst(x, y, { count: 12, color: '#ffd84d', size: [6, 12], dist: [40, 100], ms: 500, h: 30 });
+  }
+
+  // Bob the box, keep its label pointing at it, and sell weapons.
+  updateBox(now) {
+    const b = this.box;
+    if (!b) return;
+    if (b.moving) {
+      if (now < b.hiddenUntil) return;
+      this.placeBox(now);
+    }
+    b.model.position.copyFrom(this.world.at(b.x, b.y, 4 + Math.sin(now / 250) * 4));
+    b.model.rotation.y = Math.sin(now / 900) * 0.4;
+    // The label sits above the box; if the box is off screen, it waits at
+    // the edge of the screen on that side, so you know which way to go.
+    const { W, H } = this.world;
+    const sx = b.x - this.world.cameraX;
+    const sy = b.y - this.world.cameraY - 70;
+    const lx = Math.max(90, Math.min(W - 90, sx));
+    const ly = Math.max(120, Math.min(H - 40, sy));
+    b.label.style.left = `${lx}px`;
+    b.label.style.top = `${ly}px`;
+    b.label.classList.toggle('far', lx !== sx || ly !== sy);
+
+    const j = this.liveJeeps().find((jj) => Math.hypot(jj.x - b.x, jj.y - b.y) < JEEP_RADIUS + 34);
+    if (!j) return;
+    if (this.points >= BOX_PRICE) {
+      this.points -= BOX_PRICE;
+      this.drawPoints();
+      j.weapon = pick(Object.keys(WEAPONS).filter((k) => k !== 'gun' && k !== j.weapon));
+      const w = WEAPONS[j.weapon];
+      this.world.burst(b.x, b.y, { count: 20, color: w.color, size: [8, 16], dist: [50, 140], ms: 600, h: 30 });
+      this.popText(j.x, j.y - 60, w.name, w.color, 48);
+      b.moving = true;
+      b.hiddenUntil = now + BOX_MOVE_MS;
+      b.model.setEnabled(false);
+      b.label.style.display = 'none';
+      setTimeout(() => { b.label.style.display = ''; }, BOX_MOVE_MS);
+    } else if (now > b.nagUntil) {
+      this.popText(b.x, b.y - 50, `Need ${BOX_PRICE} ⭐`, '#ffffff', 30);
+      b.nagUntil = now + 1500;
     }
   }
 
@@ -653,8 +820,7 @@ export default class ZombieGame {
     let x;
     let y;
     for (let tries = 0; tries < 30; tries++) {
-      x = this.spotOnScreen(boss ? 120 : 60);
-      y = between(boss ? 180 : 120, H - (boss ? 120 : 60));
+      ({ x, y } = this.spotInView(boss ? 120 : 60));
       const j = this.closestJeep(x, y);
       if (!j || Math.hypot(x - j.x, y - j.y) > HOLE_MIN_DISTANCE * (boss ? 1.4 : 1)) break;
     }
@@ -760,8 +926,8 @@ export default class ZombieGame {
         const d = Math.hypot(dx, dy);
         if (d >= gap || d === 0) continue;
         const push = (gap - d) / 2;
-        a.x += (dx / d) * push; a.y += (dy / d) * push;
-        b.x -= (dx / d) * push; b.y -= (dy / d) * push;
+        this.moveBy(a, a.r, (dx / d) * push, (dy / d) * push);
+        this.moveBy(b, b.r, -(dx / d) * push, -(dy / d) * push);
       }
     }
   }
@@ -770,6 +936,7 @@ export default class ZombieGame {
 
   // Swing a jeep's gun toward the closest zombie in range, and fire when lined up.
   aimTurret(j, now, s) {
+    const w = WEAPONS[j.weapon];
     let target = null;
     let best = TURRET_RANGE;
     for (const z of this.zombies) {
@@ -781,9 +948,9 @@ export default class ZombieGame {
       let diff = want - j.turretAim;
       diff = Math.atan2(Math.sin(diff), Math.cos(diff));
       j.turretAim += Math.max(-TURRET_TURN * s, Math.min(TURRET_TURN * s, diff));
-      const fireEvery = this.hasBoost(j, 'rapid', now) ? RAPID_FIRE_MS : TURRET_FIRE_MS;
+      const fireEvery = w.ms * (this.hasBoost(j, 'rapid', now) ? RAPID_FACTOR : 1);
       if (Math.abs(diff) < 0.12 && now - j.lastShot > fireEvery) {
-        this.fire(j);
+        this.fire(j, now);
         j.lastShot = now;
       }
     }
@@ -791,50 +958,88 @@ export default class ZombieGame {
     j.model.turret.rotation.y = j.turretAim - j.heading;
   }
 
-  fire(j) {
-    const dx = Math.sin(j.turretAim);
-    const dy = -Math.cos(j.turretAim);
-    const x = j.x + dx * 44; // from the end of the barrel
-    const y = j.y + dy * 44;
-    const mesh = BABYLON.MeshBuilder.CreateSphere('shot', { diameter: SHOT_RADIUS * 2, segments: 6 }, this.world.scene);
-    mesh.material = glowMaterial(this.world.scene, '#ffd84d');
-    mesh.parent = this.root;
-    const shot = { x, y, vx: dx * SHOT_SPEED, vy: dy * SHOT_SPEED, mesh };
-    mesh.position.copyFrom(this.world.at(x, y, 50));
-    this.shots.push(shot);
-    this.world.burst(x, y, { count: 4, color: '#ffb347', size: [5, 9], dist: [10, 25], ms: 120, h: 50 });
+  fire(j, now) {
+    const w = WEAPONS[j.weapon];
+    const bx = j.x + Math.sin(j.turretAim) * 44; // the end of the barrel
+    const by = j.y - Math.cos(j.turretAim) * 44;
+    for (let i = 0; i < w.shots; i++) {
+      const off = w.shots > 1 ? (i / (w.shots - 1) - 0.5) * w.spread : (Math.random() - 0.5) * w.spread;
+      const a = j.turretAim + off;
+      const dx = Math.sin(a);
+      const dy = -Math.cos(a);
+      const mesh = BABYLON.MeshBuilder.CreateSphere('shot', { diameter: w.size * 2, segments: 6 }, this.world.scene);
+      mesh.material = glowMaterial(this.world.scene, w.color);
+      mesh.parent = this.root;
+      if (w.pierce) { // laser bolts are long and thin
+        mesh.scaling.z = 4;
+        mesh.rotation.y = a;
+      }
+      mesh.position.copyFrom(this.world.at(bx, by, 50));
+      this.shots.push({ x: bx, y: by, vx: dx * w.speed, vy: dy * w.speed, mesh, w, born: now, hit: new Set() });
+    }
+    this.world.burst(bx, by, { count: 4, color: w.color, size: [5, 9], dist: [10, 25], ms: 120, h: 50 });
   }
 
-  // Bullets fly straight. Each hit takes one off a zombie's hits; at 0 it's knocked out.
+  // Bullets fly straight. Each hit takes `damage` off a zombie's hits; at 0 it's knocked out.
   moveShots(s, now) {
     const { W, H } = this.world;
+    const cx = this.world.cameraX;
+    const cy = this.world.cameraY;
     for (const shot of this.shots) {
+      const { w } = shot;
       shot.x += shot.vx * s;
       shot.y += shot.vy * s;
       shot.mesh.position.copyFrom(this.world.at(shot.x, shot.y, 50));
-      const hit = this.zombies.find((z) => Math.hypot(z.x - shot.x, z.y - shot.y) < z.r + SHOT_RADIUS);
+      const hit = this.zombies.find((z) => !shot.hit.has(z) && Math.hypot(z.x - shot.x, z.y - shot.y) < z.r + w.size);
       if (hit) {
-        shot.gone = true;
-        hit.hits -= 1;
-        if (hit.hits <= 0) {
-          this.knockOut(hit);
-          if (hit.kind === 'boss') this.bossDefeated(hit, now);
+        if (w.blast) {
+          shot.gone = true;
+          this.explode(shot.x, shot.y, w, now);
         } else {
-          // Still standing: flash, get knocked back a little (the boss doesn't budge).
-          hit.flashUntil = now + 90;
-          setVisibility(hit.model, 0.4);
-          if (hit.kind !== 'boss') {
-            hit.x += shot.vx * 0.02;
-            hit.y += shot.vy * 0.02;
-          }
-          this.world.burst(hit.x, hit.y, { count: 3, color: '#7bd44a', size: [4, 8], dist: [15, 35], ms: 200 });
+          this.hurtZombie(hit, w.damage, shot.vx, shot.vy, now);
+          if (w.pierce) shot.hit.add(hit);
+          else shot.gone = true;
         }
-      } else if (shot.x < this.world.cameraX - 50 || shot.x > this.world.cameraX + W + 50 || shot.y < -50 || shot.y > H + 50) {
+      } else if ((w.life && now - shot.born > w.life)
+        || shot.x < cx - 50 || shot.x > cx + W + 50 || shot.y < cy - 50 || shot.y > cy + H + 50) {
         shot.gone = true;
       }
     }
     for (const shot of this.shots) if (shot.gone) shot.mesh.dispose();
     this.shots = this.shots.filter((shot) => !shot.gone);
+  }
+
+  // A rocket goes off: it hurts every zombie near the bang.
+  explode(x, y, w, now) {
+    this.world.burst(x, y, { count: 18, color: '#ff8a3d', size: [10, 22], dist: [40, w.blast], ms: 450, h: 30 });
+    this.world.burst(x, y, { count: 8, color: '#ffe066', size: [8, 14], dist: [20, w.blast * 0.6], ms: 350, h: 30 });
+    this.world.shake(180, 6);
+    for (const z of [...this.zombies]) {
+      if (Math.hypot(z.x - x, z.y - y) < w.blast + z.r) this.hurtZombie(z, w.damage, z.x - x, z.y - y, now);
+    }
+  }
+
+  // Take `damage` hits off zombie z (pushed back along (vx, vy) if it's still up).
+  hurtZombie(z, damage, vx, vy, now) {
+    if (z.knockedOut) return;
+    z.hits -= damage;
+    if (z.hits <= 0) {
+      z.knockedOut = true;
+      this.knockOut(z);
+      this.points += POINTS[z.kind];
+      this.drawPoints();
+      this.popText(z.x, z.y - 30, `+${POINTS[z.kind]}`, '#ffd84d', 28);
+      if (z.kind === 'boss') this.bossDefeated(z, now);
+      return;
+    }
+    // Still standing: flash, get knocked back a little (the boss doesn't budge).
+    z.flashUntil = now + 90;
+    setVisibility(z.model, 0.4);
+    if (z.kind !== 'boss') {
+      const len = Math.hypot(vx, vy) || 1;
+      this.moveBy(z, z.r, (vx / len) * 14, (vy / len) * 14);
+    }
+    this.world.burst(z.x, z.y, { count: 3, color: '#7bd44a', size: [4, 8], dist: [15, 35], ms: 200 });
   }
 
   knockOut(z) {
@@ -898,8 +1103,7 @@ export default class ZombieGame {
     let x;
     let y;
     for (let tries = 0; tries < 20; tries++) {
-      x = this.spotOnScreen(80);
-      y = between(140, H - 80);
+      ({ x, y } = this.spotInView(80));
       const j = this.closestJeep(x, y);
       if (!j || Math.hypot(x - j.x, y - j.y) > 200) break;
     }
@@ -936,7 +1140,7 @@ export default class ZombieGame {
     title.textContent = this.jeeps.length > 1 ? 'Zombies got you!' : 'Zombie got you!';
     title.style.color = '#ff4d3c';
     const sub = el('div', 'winner-sub');
-    sub.textContent = `You made it to wave ${this.wave}`;
+    sub.textContent = `You made it to wave ${this.wave} · ⭐ ${this.points}`;
     box.append(title, sub);
     this.ui.append(box);
     button(this.ui, W / 2, H / 2 + 100, 'Play again', () => this.onRestart(),
@@ -971,6 +1175,9 @@ function makeMaterials(scene) {
       return s;
     })(),
     hole: m('hole', '#2a1a0e'),
+    wood: m('wood', '#9a6a35'),
+    woodDark: m('woodDark', '#5e3d1d'),
+    gold: m('gold', '#ffcc33', true),
   };
 }
 
@@ -1039,33 +1246,40 @@ function makeGrassTexture(scene) {
 // The field: plain dirt in the middle, textured grass near the trees.
 // Layers from the bottom up: dirt -> grass (fades out toward the middle,
 // with a ragged edge) -> dark shade under the trees -> tyre tracks -> holes.
-function makeGround(game, area, W, H) {
+function makeGround(game, area) {
   const { scene } = game.world;
-  // The sand and grass pictures are made once and shared by every field.
+  const { w, h } = area;
+  // The sand and grass pictures are drawn once; each field gets its own
+  // copy so it can repeat them the right number of times across its size.
   if (!game.sandTexture) {
-    const sand = makeSandTexture(scene);
-    sand.uScale = (W + 60) / SAND_TILE;
-    sand.vScale = (H + 60) / SAND_TILE;
-    game.mats.dirt.diffuseTexture = sand;
-    game.mats.dirt.diffuseColor = new BABYLON.Color3(1, 1, 1);
-    game.sandTexture = sand;
+    game.sandTexture = makeSandTexture(scene);
     game.grassTexture = makeGrassTexture(scene);
-    game.grassTexture.uScale = W / GRASS_TILE;
-    game.grassTexture.vScale = H / GRASS_TILE;
   }
-  // (A little bigger than the screen, so neighbouring fields overlap: no seam.)
-  const dirt = BABYLON.MeshBuilder.CreateGround('dirtField', { width: W + 60, height: H + 60 }, scene);
-  dirt.material = game.mats.dirt;
-  dirt.position.y = -12 - area.k * 0.2; // (neighbours overlap a little: keep them from flickering)
+  const sand = copyTexture(scene, game.sandTexture);
+  sand.wrapU = sand.wrapV = BABYLON.Texture.WRAP_ADDRESSMODE;
+  sand.uScale = (w + 60) / SAND_TILE;
+  sand.vScale = (h + 60) / SAND_TILE;
+  const dirtMat = new BABYLON.StandardMaterial('dirt', scene);
+  dirtMat.diffuseTexture = sand;
+  dirtMat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+  area.dirtMat = dirtMat;
+  // (A little bigger than the field, so neighbouring fields overlap: no seam.)
+  const dirt = BABYLON.MeshBuilder.CreateGround('dirtField', { width: w + 60, height: h + 60 }, scene);
+  dirt.material = dirtMat;
+  dirt.position.y = -12 - area.i * 0.2; // (neighbours overlap a little: keep them from flickering)
   dirt.parent = area.node;
 
   // Grass layer: the grass texture repeats across it, and a second
   // "where is there grass" picture makes it fade out toward the middle.
+  const grass = copyTexture(scene, game.grassTexture);
+  grass.wrapU = grass.wrapV = BABYLON.Texture.WRAP_ADDRESSMODE;
+  grass.uScale = w / GRASS_TILE;
+  grass.vScale = h / GRASS_TILE;
   const mat = new BABYLON.StandardMaterial('grassLayer', scene);
-  mat.diffuseTexture = game.grassTexture;
-  mat.opacityTexture = makeGrassMask(scene, W, H, area.gaps);
+  mat.diffuseTexture = grass;
+  mat.opacityTexture = makeGrassMask(scene, w, h, area.gaps);
   mat.specularColor = BABYLON.Color3.Black();
-  const layer = BABYLON.MeshBuilder.CreateGround('grassLayer', { width: W, height: H }, scene);
+  const layer = BABYLON.MeshBuilder.CreateGround('grassLayer', { width: w, height: h }, scene);
   layer.material = mat;
   layer.position.y = -11;
   layer.alphaIndex = 1;
@@ -1073,33 +1287,59 @@ function makeGround(game, area, W, H) {
   area.grassMat = mat;
 }
 
+// A copy of a drawn texture (Babylon's own clone() leaves the copy blank).
+function copyTexture(scene, tex) {
+  const { width, height } = tex.getSize();
+  const copy = new BABYLON.DynamicTexture(tex.name, { width, height }, scene, true);
+  copy.getContext().drawImage(tex.getContext().canvas, 0, 0);
+  copy.update();
+  return copy;
+}
+
 // A path just opened in this field: redraw its grass and shade with a dirt
 // track through the gap.
 function redrawGrass(game, area) {
-  const { scene, W, H } = game.world;
+  const { scene } = game.world;
   const oldMask = area.grassMat.opacityTexture;
-  area.grassMat.opacityTexture = makeGrassMask(scene, W, H, area.gaps);
+  area.grassMat.opacityTexture = makeGrassMask(scene, area.w, area.h, area.gaps);
   oldMask.dispose();
   const oldShade = area.shadeMat.diffuseTexture;
-  area.shadeMat.diffuseTexture = makeShadeTexture(scene, W, H, area.gaps);
+  area.shadeMat.diffuseTexture = makeShadeTexture(scene, area.w, area.h, area.gaps);
   oldShade.dispose();
 }
 
-// Rub out the grass (or shade) where a path goes through the trees, with
-// soft edges. S = picture size, depth = how far in from the side to rub out.
-function cutPaths(ctx, S, W, H, gaps, depth) {
-  const top = S * (H / 2 - GAP_HALF * 0.85) / H;
-  const bottom = S * (H / 2 + GAP_HALF * 0.85) / H;
+// Is the spot (x, y) in a field (measured from its top-left) by this path
+// through its trees? `extra` widens the check a little.
+function inGap(area, gap, x, y, extra) {
+  const along = gap.side === 'left' || gap.side === 'right' ? y : x;
+  if (Math.abs(along - gap.at) > GAP_HALF + extra) return false;
+  if (gap.side === 'left') return x < 150;
+  if (gap.side === 'right') return x > area.w - 150;
+  if (gap.side === 'top') return y < 150;
+  return y > area.h - 150;
+}
+
+// Rub out the grass (or shade) where paths go through the trees, with soft
+// edges. S = picture size, w/h = field size, bx/by = how deep to rub out.
+function cutPaths(ctx, S, w, h, gaps, bx, by) {
   ctx.save();
   ctx.globalCompositeOperation = 'destination-out';
-  const g = ctx.createLinearGradient(0, top, 0, bottom);
-  g.addColorStop(0, 'rgba(0,0,0,0)');
-  g.addColorStop(0.25, 'rgba(0,0,0,1)');
-  g.addColorStop(0.75, 'rgba(0,0,0,1)');
-  g.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = g;
-  if (gaps.left) ctx.fillRect(0, top, depth, bottom - top);
-  if (gaps.right) ctx.fillRect(S - depth, top, depth, bottom - top);
+  for (const g of gaps) {
+    const vertical = g.side === 'left' || g.side === 'right';
+    const len = vertical ? h : w;
+    const a = S * (g.at - GAP_HALF * 0.85) / len;
+    const b = S * (g.at + GAP_HALF * 0.85) / len;
+    const grad = vertical ? ctx.createLinearGradient(0, a, 0, b) : ctx.createLinearGradient(a, 0, b, 0);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(0.25, 'rgba(0,0,0,1)');
+    grad.addColorStop(0.75, 'rgba(0,0,0,1)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    if (g.side === 'left') ctx.fillRect(0, a, bx, b - a);
+    if (g.side === 'right') ctx.fillRect(S - bx, a, bx, b - a);
+    if (g.side === 'top') ctx.fillRect(a, 0, b - a, by);
+    if (g.side === 'bottom') ctx.fillRect(a, S - by, b - a, by);
+  }
   ctx.restore();
 }
 
@@ -1139,7 +1379,7 @@ function makeGrassMask(scene, W, H, gaps) {
     ctx.fillStyle = g;
     ctx.fillRect(x - r, y - r, r * 2, r * 2);
   }
-  cutPaths(ctx, S, W, H, gaps, bx * 1.05);
+  cutPaths(ctx, S, W, H, gaps, bx * 1.05, by * 1.05);
   tex.hasAlpha = true;
   tex.update();
   return tex;
@@ -1206,8 +1446,9 @@ const TRACK_SCALE = 0.5;     // picture pixels per field pixel
 const TRACK_FADE_EVERY = 100; // ms between fading steps
 const TRACK_FADE = 0.05;     // how much the marks fade each step (all gone in ~6 seconds)
 
-function makeTracks(game, area, W, H) {
+function makeTracks(game, area) {
   const { scene } = game.world;
+  const { w: W, h: H } = area;
   const tw = Math.round(W * TRACK_SCALE);
   const th = Math.round(H * TRACK_SCALE);
   const tex = new BABYLON.DynamicTexture('tracks', { width: tw, height: th }, scene, false);
@@ -1325,7 +1566,8 @@ const TREE_GREENS = [
   '#3a7a55', // blue-green
 ];
 
-function makeBorderTrees(game, area, W, H) {
+function makeBorderTrees(game, area) {
+  const { w: W, h: H } = area;
   const kinds = ['pine', 'pine', 'pineCrooked']; // mostly straight pines
   const spots = [];
   const ring = (inset, step, size) => {
@@ -1352,8 +1594,6 @@ function makeBorderTrees(game, area, W, H) {
   }
   const shades = game.treeMats;
   for (const [x, y, [small, big]] of spots) {
-    // No trees in an open path (the left side of every field after the first).
-    if (area.gaps.left && x < 150 && Math.abs(y - H / 2) < GAP_HALF + 30) continue;
     const tree = game.world.spawn(pick(kinds), between(small, big));
     tree.parent = area.node;
     tree.position.copyFrom(fieldSpot(W, H, x, y, 30));
@@ -1370,8 +1610,9 @@ function makeBorderTrees(game, area, W, H) {
 
 // Darker grass right under the trees, fading out toward the middle
 // (like the shade under a forest edge).
-function makeEdgeShade(game, area, W, H) {
+function makeEdgeShade(game, area) {
   const { scene } = game.world;
+  const { w: W, h: H } = area;
   const mat = new BABYLON.StandardMaterial('edgeShade', scene);
   mat.diffuseTexture = makeShadeTexture(scene, W, H, area.gaps);
   mat.useAlphaFromDiffuseTexture = true;
@@ -1383,18 +1624,18 @@ function makeEdgeShade(game, area, W, H) {
   plane.parent = area.node;
   area.shadeMat = mat;
 
-  // Darker grass tufts near the edges (none where a path goes, or might go later).
+  // Darker grass tufts near the edges (cleared away if a path opens there).
   for (let i = 0; i < 60; i++) {
     const side = Math.floor(Math.random() * 4);
     const d = between(10, GRASS_BAND * 0.7);
     const x = side === 0 ? d : side === 1 ? W - d : between(0, W);
     const y = side === 2 ? d : side === 3 ? H - d : between(0, H);
     if (side < 2 && (y < 0 || y > H)) continue;
-    if (side < 2 && Math.abs(y - H / 2) < GAP_HALF) continue;
     const tuft = BABYLON.MeshBuilder.CreateCylinder('tuft', { diameterTop: 0, diameterBottom: between(12, 22), height: 16, tessellation: 5 }, scene);
     tuft.material = game.mats.darkTuft;
     tuft.position.copyFrom(fieldSpot(W, H, x, y, -3));
     tuft.parent = area.node;
+    area.tufts.push({ mesh: tuft, x, y });
   }
 }
 
@@ -1416,7 +1657,7 @@ function makeShadeTexture(scene, W, H, gaps) {
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, 256, 256);
   }
-  cutPaths(ctx, 256, W, H, gaps, bx * 1.1);
+  cutPaths(ctx, 256, W, H, gaps, bx * 1.1, by * 1.1);
   tex.hasAlpha = true;
   tex.update();
   return tex;
@@ -1481,6 +1722,29 @@ function makePotion(game, color) {
   // The bottle's own colour is disposed with it (glass and cork are shared).
   bottle.onDisposeObservable.add(() => liquid.dispose());
   return bottle;
+}
+
+// The weapon box: a wooden crate with dark bands and a glowing gold lid.
+function makeBox(game) {
+  const { scene } = game.world;
+  const M = game.mats;
+  const box = new BABYLON.TransformNode('weaponBox', scene);
+  box.parent = game.root;
+  const crate = BABYLON.MeshBuilder.CreateBox('crate', { width: 64, height: 42, depth: 64 }, scene);
+  crate.material = M.wood;
+  crate.position.y = 21;
+  crate.parent = box;
+  for (const x of [-22, 22]) {
+    const band = BABYLON.MeshBuilder.CreateBox('band', { width: 8, height: 43, depth: 66 }, scene);
+    band.material = M.woodDark;
+    band.position.set(x, 21, 0);
+    band.parent = box;
+  }
+  const lid = BABYLON.MeshBuilder.CreateBox('lid', { width: 68, height: 6, depth: 68 }, scene);
+  lid.material = M.gold;
+  lid.position.y = 45;
+  lid.parent = box;
+  return box;
 }
 
 // ---------- Zombie models (Kenney) ----------

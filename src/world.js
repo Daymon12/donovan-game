@@ -66,6 +66,7 @@ export async function createWorld(canvas, W, H) {
     // is looking (Zombie Jeep slides these over when you drive into a new area).
     originX: 0,
     cameraX: 0,
+    cameraY: 0, // (board pixels down: the camera itself moves along -z)
 
     // Board spot (x, y) -> 3D position. h = height above the board.
     at(x, y, h = 0) {
@@ -145,8 +146,8 @@ export async function createWorld(canvas, W, H) {
       world.animate(ms, (t) => {
         const k = amount * (1 - t);
         camera.position.x = world.cameraX + (Math.random() - 0.5) * 2 * k;
-        camera.position.z = (Math.random() - 0.5) * 2 * k;
-      }, () => { camera.position.x = world.cameraX; camera.position.z = 0; });
+        camera.position.z = -world.cameraY + (Math.random() - 0.5) * 2 * k;
+      }, () => { camera.position.x = world.cameraX; camera.position.z = -world.cameraY; });
     },
   };
 

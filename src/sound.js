@@ -62,3 +62,44 @@ export function play(name) {
   src.start(0);
   return { stop() { try { src.stop(); } catch { /* already finished */ } } };
 }
+
+// Background music that loops, with a volume knob.
+//   const m = sound.music('assets/audio/music.mp3', 0.4)
+//   m.volume(0.1, 0.6)  -> slide to 0.1 over 0.6 seconds
+//   m.stop()
+// It streams from a file (a long song would take too much memory to
+// unpack in one go like the short sounds above).
+export function music(url, startVolume = 0.4) {
+  const c = context();
+  if (!c) return { volume() {}, stop() {} };
+  if (c.state !== 'running') c.resume();
+  const el = new Audio();
+  el.loop = true;
+  const gain = c.createGain();
+  gain.gain.value = startVolume;
+  let node = null;
+  let stopped = false;
+  // Load it as one blob first (iPads can be fussy streaming songs through the offline cache).
+  fetch(url).then((r) => r.blob()).then((blob) => {
+    if (stopped) return;
+    el.src = URL.createObjectURL(blob);
+    node = c.createMediaElementSource(el);
+    node.connect(gain).connect(c.destination);
+    el.play().catch(() => { /* no music if it won't play - the game still works */ });
+  }).catch(() => {});
+  return {
+    volume(v, seconds = 0.5) {
+      const t = c.currentTime;
+      gain.gain.cancelScheduledValues(t);
+      gain.gain.setValueAtTime(gain.gain.value, t);
+      gain.gain.linearRampToValueAtTime(v, t + seconds);
+    },
+    stop() {
+      stopped = true;
+      el.pause();
+      if (el.src) URL.revokeObjectURL(el.src);
+      el.removeAttribute('src');
+      if (node) node.disconnect();
+    },
+  };
+}
