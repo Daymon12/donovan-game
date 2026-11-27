@@ -54,10 +54,7 @@ export function get(key) {
 // Move a setting one step up (+1) or down (-1). Returns the new choice.
 export function step(key, delta) {
   const max = OPTIONS[key].choices.length - 1;
-  picked[key] = Phaser.Math.Clamp(picked[key] + delta, 0, max);
+  picked[key] = Math.min(max, Math.max(0, picked[key] + delta));
   save();
   return get(key);
 }
-
-export function isFirst(key) { return picked[key] === 0; }
-export function isLast(key) { return picked[key] === OPTIONS[key].choices.length - 1; }

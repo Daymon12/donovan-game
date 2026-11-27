@@ -1,0 +1,90 @@
+/* Look of the menus and buttons (HTML on top of the 3D view). */
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #0f1230;
+  overflow: hidden;
+  /* stop iPad text selection, long-press menus and double-tap zoom */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: none;
+  font-family: 'Arial Rounded MT Bold', Arial, sans-serif;
+}
+
+#stage { position: absolute; left: 50%; top: 50%; transform-origin: center; }
+#view { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
+#ui { position: absolute; inset: 0; pointer-events: none; color: #fff; }
+#ui > * { position: absolute; }
+.tap { pointer-events: auto; cursor: pointer; }
+
+/* Buttons */
+.btn {
+  transform: translate(-50%, -50%);
+  border-radius: 24px;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: bold; color: #fff;
+  box-shadow: 0 6px 0 rgba(0, 0, 0, 0.35), inset 0 -4px 0 rgba(0, 0, 0, 0.15);
+  transition: transform 0.08s;
+}
+.btn:active { transform: translate(-50%, -50%) scale(0.92); }
+.breathe { animation: breathe 1.6s ease-in-out infinite; }
+@keyframes breathe {
+  0%, 100% { transform: translate(-50%, -50%) scale(1); }
+  50% { transform: translate(-50%, -50%) scale(1.06); }
+}
+
+/* Text */
+.title {
+  left: 50%; transform: translate(-50%, -50%);
+  white-space: nowrap;
+  font-size: 80px; font-weight: bold; color: #ffd84d;
+  text-shadow: 0 4px 0 #b8860b, 0 0 30px rgba(255, 216, 77, 0.4);
+}
+.small { font-family: Arial, sans-serif; font-size: 22px; color: #8a90b8; white-space: nowrap; }
+.label { transform: translate(-50%, -50%); font-size: 34px; white-space: nowrap; }
+.value { transform: translate(-50%, -50%); font-size: 44px; font-weight: bold; color: #2ecc71; white-space: nowrap; }
+.preview-bullet {
+  left: 0; top: 0;
+  width: 14px; height: 36px; border-radius: 7px;
+  background: #ffe14d; box-shadow: 0 0 0 3px #2ec4ff, 0 0 16px #ffe14d;
+}
+
+/* Player strips */
+.panel { transform-origin: center; }
+.panel > * { position: absolute; top: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.powers { left: 0; gap: 10px; }
+.info { right: 0; gap: 8px; }
+.power {
+  width: 84px; border-radius: 14px; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 40px; background: #2a2f55; opacity: 0.75;
+  transition: transform 0.09s;
+}
+.power.on { background: var(--on); border: 4px solid #fff; opacity: 1; box-shadow: 0 0 18px var(--on); }
+.power.pressed { transform: scale(0.88); }
+.score { font-size: 56px; font-weight: bold; line-height: 1; text-shadow: 0 0 14px currentColor; }
+.score.bump { animation: bump 0.3s; }
+@keyframes bump { 50% { transform: scale(1.5); } }
+.health { display: flex; gap: 2px; }
+.health span { width: 8px; height: 18px; border-radius: 3px; border: 2px solid #5a5f7a; box-sizing: border-box; }
+.lives { display: flex; gap: 10px; font-size: 22px; }
+.lives span::before { content: '▲'; }
+.lives span.used { color: transparent; -webkit-text-stroke: 2px #5a5f7a; }
+
+/* Game messages */
+.plus {
+  transform: translate(-50%, -50%);
+  font-size: 56px; font-weight: bold;
+  animation: rise 0.8s forwards;
+}
+@keyframes rise { to { transform: translate(-50%, calc(-50% + var(--rise))); opacity: 0; } }
+.winner { left: 0; right: 0; text-align: center; transform: translateY(-50%); }
+.winner-title {
+  font-size: 88px; font-weight: bold;
+  -webkit-text-stroke: 3px #fff; paint-order: stroke fill;
+  text-shadow: 0 0 30px currentColor;
+  animation: pop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.winner-sub { font-size: 40px; margin-top: 10px; }
+@keyframes pop { from { transform: scale(0); } }

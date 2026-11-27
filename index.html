@@ -12,28 +12,19 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Donovan">
-  <meta name="theme-color" content="#1b1f3b">
-
-  <style>
-    html, body {
-      margin: 0;
-      height: 100%;
-      background: #1b1f3b;
-      overflow: hidden;
-      /* stop iPad text selection, long-press menus and double-tap zoom */
-      -webkit-user-select: none;
-      user-select: none;
-      -webkit-touch-callout: none;
-      touch-action: none;
-    }
-    #game { width: 100vw; height: 100vh; height: 100dvh; }
-  </style>
+  <meta name="theme-color" content="#0f1230">
+  <link rel="stylesheet" href="src/style.css">
 </head>
 <body>
-  <div id="game"></div>
+  <!-- The 3D view, with the buttons and menus on top of it -->
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <div id="ui"></div>
+  </div>
 
-  <!-- Phaser is kept in the project so the game works offline -->
-  <script src="lib/phaser.min.js"></script>
+  <!-- Babylon.js (3D engine) is kept in the project so the game works offline -->
+  <script src="lib/babylon.js"></script>
+  <script src="lib/babylonjs.loaders.min.js"></script>
   <script type="module" src="src/main.js"></script>
 
   <script>
